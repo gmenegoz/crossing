@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<settings P2D="1" fullScreen="1" scaleFactor="1.0" noCursor="1" displayFrameRate="0" diameter="100.0" user = "10" maxNoCursorTime = "100" maxCursorDist = "70"
-stillDuration = "2000" stillDelta = "20" blockedDuration = "4000"
-factor = "0.4" verticalShift = "60" factorCrossing = "0.8" exchangeTime="4.0" connectorFactor="1.2" connectorDeltaY="20" disconnectFactor="2.0"
-aniSpeed = "5.0" aniFactorDist = "0.8" aniFactorDistVertical = "0.5" linePosY = "0.3" playSound="1"/>
