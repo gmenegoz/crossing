@@ -9,8 +9,6 @@ from app.models import LAYERS, Pieces
 
 ASSETS_DIR = Path(__file__).parent.parent / "assets"
 
-# Layers with _l/_r suffix are the left/right halves of the original PNG.
-# The base name (without suffix) is the assets subfolder.
 LAYER_ORDER = ["legback_l", "legback_r", "body", "legfront_l", "legfront_r", "head", "tail", "wing"]
 LAYER_POSITION = {
     "head":       (0, 30),
@@ -23,13 +21,12 @@ LAYER_POSITION = {
     "tail":       (460, 50),
 }
 
-# Cache: "layer_variant/filename" -> {b64, w, h}
-# Leg layers are stored as "legfront_l/file.png", "legfront_r/file.png", etc.
+# Global cache for built-in assets: "layer_variant/filename" -> {b64, w, h}
 _cache: dict[str, dict] = {}
 
 
 def _process_piece(layer: str, img: Image.Image) -> Image.Image:
-    """Apply left/right split and autocrop."""
+    """Apply left/right split (for leg layers) and autocrop to content bounding box."""
     w, h = img.size
     if layer.endswith("_l"):
         img = img.crop((0, 0, w // 2, h))
@@ -56,33 +53,50 @@ def _build_cache() -> None:
                 for variant in ("_l", "_r"):
                     processed = _process_piece(layer + variant, img.copy())
                     pw, ph = processed.size
-                    key = f"{layer}{variant}/{png.name}"
-                    _cache[key] = {"b64": _img_to_b64(processed), "w": pw, "h": ph}
+                    _cache[f"{layer}{variant}/{png.name}"] = {"b64": _img_to_b64(processed), "w": pw, "h": ph}
             else:
                 processed = _process_piece(layer, img)
                 pw, ph = processed.size
-                key = f"{layer}/{png.name}"
-                _cache[key] = {"b64": _img_to_b64(processed), "w": pw, "h": ph}
+                _cache[f"{layer}/{png.name}"] = {"b64": _img_to_b64(processed), "w": pw, "h": ph}
 
 
 _build_cache()
 
 
-def available_pngs(layer: str) -> list[str]:
-    return sorted(p.name for p in (ASSETS_DIR / layer).glob("*.png"))
+def available_pngs(layer: str, extra_files: dict[str, list[str]] | None = None) -> list[str]:
+    builtin = sorted(p.name for p in (ASSETS_DIR / layer).glob("*.png"))
+    if extra_files and extra_files.get(layer):
+        return builtin + extra_files[layer]
+    return builtin
 
 
-def random_pieces() -> Pieces:
-    return Pieces(**{layer: random.choice(available_pngs(layer)) for layer in LAYERS})
+def process_imported(layer: str, filename: str, data: bytes) -> dict[str, dict]:
+    """Process an uploaded PNG for the given layer. Returns cache entries to store."""
+    img = Image.open(io.BytesIO(data)).convert("RGBA")
+    entries: dict[str, dict] = {}
+    if layer in ("legfront", "legback"):
+        for variant in ("_l", "_r"):
+            processed = _process_piece(layer + variant, img.copy())
+            pw, ph = processed.size
+            entries[f"{layer}{variant}/{filename}"] = {"b64": _img_to_b64(processed), "w": pw, "h": ph}
+    else:
+        processed = _process_piece(layer, img)
+        pw, ph = processed.size
+        entries[f"{layer}/{filename}"] = {"b64": _img_to_b64(processed), "w": pw, "h": ph}
+    return entries
 
 
-def compose_svg(pieces: Pieces) -> str:
+def random_pieces(extra_files: dict[str, list[str]] | None = None) -> Pieces:
+    return Pieces(**{layer: random.choice(available_pngs(layer, extra_files)) for layer in LAYERS})
+
+
+def compose_svg(pieces: Pieces, extra_cache: dict[str, dict] | None = None) -> str:
     parts = []
     for layer in LAYER_ORDER:
         subfolder = layer[:-2] if layer.endswith(("_l", "_r")) else layer
         filename = getattr(pieces, subfolder)
         key = f"{layer}/{filename}"
-        entry = _cache[key]
+        entry = (extra_cache or {}).get(key) or _cache[key]
         x, y = LAYER_POSITION[layer]
         parts.append({"x": x, "y": y, "w": entry["w"], "h": entry["h"], "b64": entry["b64"]})
 

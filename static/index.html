@@ -46,8 +46,9 @@
       transition: background 0.15s;
     }
     #sidebar-controls button:hover { background: #3a3a3a; }
-    #btn-random { border-left: 3px solid #6a9fb5 !important; }
-    #btn-manual { border-left: 3px solid #9b7fc4 !important; }
+    #btn-random  { border-left: 3px solid #6a9fb5 !important; }
+    #btn-manual  { border-left: 3px solid #9b7fc4 !important; }
+    #btn-import  { border-left: 3px solid #c49b3f !important; }
 
     #chimera-list {
       flex: 1;
@@ -251,16 +252,16 @@
   <div id="sidebar-controls">
     <button id="btn-random">Random</button>
     <button id="btn-manual">Manual</button>
+    <button id="btn-import">Import</button>
   </div>
+  <input type="file" id="file-input" webkitdirectory accept=".png" style="display:none" multiple />
   <ul id="chimera-list"></ul>
 </aside>
 
 <!-- ── Stage ──────────────────────────────────────────── -->
+<!-- TODO Different message if Chieras are there or not -->
 <main id="stage">
   <div id="stage-svg"></div>
-
-  // TODO Different message if Chieras are there or not
-  
   <p id="stage-empty">No chimeras yet.<br>Create one with the buttons on the left.</p>
   <div id="stage-actions" style="display:none">
     <button id="btn-delete">Delete</button>
@@ -288,11 +289,12 @@ const LAYER_LABELS = {
 };
 
 const state = {
-  chimeras: [],       // ChimeraListItem[]
-  selected: null,     // full Chimera | null
-  layerOptions: {},   // {layer: [filename, ...]}
-  modalMode: null,    // "create" | "edit"
-  modalSel: {},       // {layer: filename}
+  chimeras: [],        // ChimeraListItem[]
+  selected: null,      // full Chimera | null
+  layerOptions: {},    // {layer: [filename, ...]}
+  modalMode: null,     // "create" | "edit"
+  modalSel: {},        // {layer: filename}
+  importedFiles: new Set(),  // filenames that came from user import
 };
 
 // ── API helpers ──────────────────────────────────────────
@@ -452,7 +454,9 @@ function buildModalBody() {
       div.dataset.file  = file;
 
       const img = document.createElement("img");
-      img.src = `/assets/${layer}/${file}`;
+      img.src = state.importedFiles.has(file)
+        ? `/api/imported-preview/${layer}/${encodeURIComponent(file)}`
+        : `/assets/${layer}/${file}`;
       img.alt = file;
       div.appendChild(img);
 
@@ -508,6 +512,33 @@ document.getElementById("btn-manual").addEventListener("click", () => {
 document.getElementById("btn-edit").addEventListener("click", () => {
   if (!state.selected) return;
   openModal("edit");
+});
+
+// ── Import pieces ────────────────────────────────────────
+document.getElementById("btn-import").addEventListener("click", () => {
+  document.getElementById("file-input").click();
+});
+
+document.getElementById("file-input").addEventListener("change", async (e) => {
+  const files = [...e.target.files].filter(f => f.name.toLowerCase().endsWith(".png"));
+  if (files.length === 0) return;
+
+  const form = new FormData();
+  for (const f of files) form.append("files", f, f.name);
+
+  const res = await fetch("/api/import-pieces", { method: "POST", body: form });
+  if (!res.ok) { console.error("Import failed", await res.text()); return; }
+
+  const imported = await res.json(); // {layer: [filename, ...]}
+  for (const fnames of Object.values(imported)) {
+    for (const fname of fnames) state.importedFiles.add(fname);
+  }
+
+  // Merge imported filenames into layerOptions and refresh layers from server
+  state.layerOptions = await api("GET", "/layers");
+
+  // Reset file input so the same folder can be re-selected
+  e.target.value = "";
 });
 
 // ── Boot ─────────────────────────────────────────────────

@@ -1,12 +1,14 @@
 from uuid import UUID
 
-from app.models import Chimera
+from app.models import LAYERS, Chimera
 
 
 class ChimeraStore:
     def __init__(self) -> None:
         self._chimeras: dict[UUID, Chimera] = {}
         self._counter: int = 0
+        self._imported: dict[str, dict] = {}              # "layer_variant/filename" -> {b64,w,h}
+        self._imported_files: dict[str, list[str]] = {layer: [] for layer in LAYERS}
 
     def next_number(self) -> int:
         self._counter += 1
@@ -26,6 +28,18 @@ class ChimeraStore:
 
     def update(self, chimera: Chimera) -> None:
         self._chimeras[chimera.id] = chimera
+
+    def add_imported(self, layer: str, filename: str, entries: dict[str, dict]) -> None:
+        """Store processed cache entries for an imported piece and register its filename."""
+        self._imported.update(entries)
+        if filename not in self._imported_files[layer]:
+            self._imported_files[layer].append(filename)
+
+    def imported_files(self) -> dict[str, list[str]]:
+        return {layer: list(files) for layer, files in self._imported_files.items()}
+
+    def imported_cache(self) -> dict[str, dict]:
+        return self._imported
 
 
 class SessionRegistry:
