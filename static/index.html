@@ -326,15 +326,20 @@ function renderList() {
     nameEl.className = "chimera-name";
     nameEl.textContent = c.name;
 
-    // Double-click to rename
+    // Double-click to rename — block the click that the browser fires after dblclick
+    let renaming = false;
     nameEl.addEventListener("dblclick", e => {
       e.stopPropagation();
+      renaming = true;
       startRename(c.id, nameEl);
     });
 
     li.appendChild(thumb);
     li.appendChild(nameEl);
-    li.addEventListener("click", () => selectChimera(c.id));
+    li.addEventListener("click", () => {
+      if (renaming) { renaming = false; return; }
+      selectChimera(c.id);
+    });
     ul.appendChild(li);
   }
 }
@@ -359,7 +364,10 @@ function renderStage() {
 async function selectChimera(id) {
   state.selected = await api("GET", `/chimeras/${id}`);
   renderStage();
-  renderList(); // update active highlight
+  // Update active highlight without rebuilding the list (would break dblclick rename)
+  document.querySelectorAll("#chimera-list li").forEach(li => {
+    li.classList.toggle("active", li.dataset.id === String(id));
+  });
 }
 
 // ── Rename (inline) ──────────────────────────────────────
