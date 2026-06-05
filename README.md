@@ -29,5 +29,7 @@
 ## Problemi noti su cui sto lavorando
 - a volte è MOLTO lento a creare una chimera (sto verificando se è un problema della mia rete, dell'applicazione o del server su cui è installato)
 - alcune chimere hanno zampe e coda fuori posto
+- non c'è controllo se uno importa due volte gli stessi pezzi
+- a volte vengono create chimere con tre paia di zampe
 - le zampe degli uccelli sono tagliate a metà
 - i costumi importati in Scratch non sono centrati bene
