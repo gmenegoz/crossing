@@ -1,3 +1,10 @@
 output/
+htmlcov/
 .claude/
 .venv/
+.pytest_cache/
+app/__pycache__/
+tests/__pycache__/
+tests/integration/__pycache__/
+tests/unit/__pycache__/
+.coverage
