@@ -7,6 +7,7 @@ from app.composer import (
     LAYER_ORDER,
     _img_to_b64,
     _process_piece,
+    _split_legs,
     available_pngs,
     compose_svg,
     process_imported,
@@ -22,17 +23,17 @@ def _rgba(w: int, h: int, color=(255, 0, 0, 255)) -> Image.Image:
 class TestProcessPiece:
     def test_left_crop(self):
         img = _rgba(100, 50)
-        result = _process_piece("legfront_l", img)
+        result = _split_legs("legfront_l", img)
         assert result.size[0] == 50
 
     def test_right_crop(self):
         img = _rgba(100, 50)
-        result = _process_piece("legfront_r", img)
+        result = _split_legs("legfront_r", img)
         assert result.size[0] == 50
 
     def test_no_split_for_regular_layer(self):
         img = _rgba(100, 50)
-        result = _process_piece("head", img)
+        result = _split_legs("head", img)
         # autocrop on fully opaque image leaves it unchanged
         assert result.size == (100, 50)
 
@@ -170,6 +171,6 @@ class TestComposeSvg:
 
         # Replace head with an imported piece
         pieces = sample_pieces.model_copy(update={"head": "imported_head.png"})
-        extra_cache = {"head/imported_head.png": {"b64": b64_val, "w": 2, "h": 2}}
+        extra_cache = {"head/imported_head.png": {"b64": b64_val, "w": 2, "h": 2, "x": 0, "y": 0}}
         svg = compose_svg(pieces, extra_cache)
         assert b64_val in svg

@@ -74,7 +74,7 @@ class TestChimeraStore:
 
     def test_add_imported_stores_entries(self):
         store = ChimeraStore()
-        entries = {"head/custom.png": {"b64": "abc", "w": 10, "h": 10}}
+        entries = {"head/custom.png": {"b64": "abc", "w": 10, "h": 10, "x": 0, "y": 15}}
         store.add_imported("head", "custom.png", entries)
         assert store.imported_cache() == entries
 
