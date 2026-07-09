@@ -29,7 +29,7 @@ class ChimeraStore:
     def update(self, chimera: Chimera) -> None:
         self._chimeras[chimera.id] = chimera
 
-    def add_imported(self, layer: str, filename: str, entries: dict[str, dict]) -> None:
+    def add_imported(self, layer: str, filename: str, entries: dict[str, Image.Image]) -> None:
         """Store processed cache entries for an imported piece and register its filename."""
         self._imported.update(entries)
         if filename not in self._imported_files[layer]:

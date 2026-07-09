@@ -42,7 +42,7 @@ def pick_random_png(subfolder: str) -> Path:
     return random.choice(pngs)
 
 
-def load_piece(layer: str, path: Path) -> tuple[Image.Image, int, int]:
+def load_piece(layer: str, path: Path) -> Image.Image:
     """Load a PNG, apply split if needed, then autocrop to content bounding box."""
     img = Image.open(path).convert("RGBA")
     return img

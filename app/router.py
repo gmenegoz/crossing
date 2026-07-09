@@ -1,5 +1,6 @@
 import base64
 import re
+import io
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile
@@ -41,6 +42,10 @@ def get_store(request: Request, response: Response) -> ChimeraStore:
 def _to_list_item(c: Chimera) -> ChimeraListItem:
     return ChimeraListItem(id=c.id, number=c.number, name=c.name, svg=c.svg)
 
+def _img_to_b64(img: Image.Image) -> str:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 @router.get("/layers")
 def get_layers(store: ChimeraStore = Depends(get_store)) -> dict[str, list[str]]:
@@ -68,11 +73,11 @@ async def import_pieces(
 @router.get("/imported-preview/{layer}/{filename}")
 def imported_preview(layer: str, filename: str, store: ChimeraStore = Depends(get_store)) -> RawResponse:
     cache = store.imported_cache()
-    key = f"{layer}_l/{filename}" if layer in ("legfront", "legback") else f"{layer}/{filename}"
+    key = f"{layer}/{filename}"
     entry = cache.get(key)
     if entry is None:
         raise HTTPException(status_code=404, detail="Not found")
-    return RawResponse(content=base64.b64decode(entry["b64"]), media_type="image/png")
+    return RawResponse(content=base64.b64decode(_img_to_b64(entry)), media_type="image/png")
 
 
 @router.get("/chimeras")
