@@ -2,6 +2,7 @@ import base64
 import re
 import io
 from uuid import UUID, uuid4
+from PIL import Image
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile
 from fastapi.responses import Response as RawResponse
