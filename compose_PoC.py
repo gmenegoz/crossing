@@ -25,6 +25,14 @@ LAYER_POSITION = {
     "legback_r":  (380, 181),
     "tail":       (519, 0),
 }
+LAYER_PROBABILITY = {
+    "head": 1,
+    "body": 1,
+    "wing": 0.15,
+    "tail": 0.8,
+    "legback": 0.95,
+    "legfront": 0.95
+}
 
 def pick_random_png(subfolder: str) -> Path:
     folder = ASSETS_DIR / subfolder
@@ -83,17 +91,19 @@ def add_part(img: Image.Image, layer: str, path: str, parts: list) -> list:
 def compose():
     OUTPUT_DIR.mkdir(exist_ok=True)
 
-    # Map subfolder -> chosen PNG path (so _l and _r share the same file)
-    chosen: dict[str, Path] = {}
-    for layer in LAYER_ORDER:
-        subfolder = layer
-        if subfolder not in chosen:
-            chosen[subfolder] = pick_random_png(subfolder)
-
     parts = []
     for layer in LAYER_ORDER:
-        subfolder = layer
-        path = chosen[subfolder]
+        threshold = LAYER_PROBABILITY[layer]
+        if layer == "legfront":
+            currentLayers = [p["layer"][0:7] for p in parts]
+            print(currentLayers)
+            if "legback" not in currentLayers:
+                continue
+            else:
+                threshold = 1.0
+        if random.random() >= threshold:
+            continue
+        path = pick_random_png(layer)
         img = load_piece(layer, path)
         if layer.startswith("leg"):
             legs = split_legs(img)
