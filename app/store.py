@@ -1,5 +1,5 @@
 from uuid import UUID
-
+from PIL import Image
 from app.models import LAYERS, Chimera
 
 
