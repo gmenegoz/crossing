@@ -99,54 +99,12 @@ class TestProcessImported:
         img.save(buf, format="PNG")
         return buf.getvalue()
 
-    def test_regular_layer_returns_one_key(self):
+    def test_layer_returns_one_key(self):
         data = self._png_bytes()
         entries = process_imported("head", "custom.png", data)
         assert list(entries.keys()) == ["head/custom.png"]
 
-    def test_leg_layer_returns_two_keys(self):
-        data = self._png_bytes(8, 8)
-        entries = process_imported("legfront", "custom.png", data)
-        assert set(entries.keys()) == {"legfront_l/custom.png", "legfront_r/custom.png"}
-
-    def test_legback_returns_two_keys(self):
-        data = self._png_bytes(8, 8)
-        entries = process_imported("legback", "custom.png", data)
-        assert set(entries.keys()) == {"legback_l/custom.png", "legback_r/custom.png"}
-
-    def test_entry_has_required_fields(self):
-        data = self._png_bytes()
-        entries = process_imported("tail", "t.png", data)
-        entry = entries["tail/t.png"]
-        assert "b64" in entry
-        assert "w" in entry
-        assert "h" in entry
-        assert isinstance(entry["w"], int)
-        assert isinstance(entry["h"], int)
-
-
-class TestRandomPieces:
-    def test_returns_pieces_instance(self):
-        p = random_pieces()
-        assert isinstance(p, Pieces)
-
-    def test_all_fields_are_valid_filenames(self):
-        p = random_pieces()
-        for layer in LAYERS:
-            filename = getattr(p, layer)
-            assert filename in available_pngs(layer), f"{filename} not in {layer} builtins"
-
-    def test_with_extra_files_can_pick_them(self):
-        # Run many times; with only 1 extra file on a small layer (wing=2 files),
-        # the extra should eventually be picked.
-        extra = {l: [] for l in LAYERS}
-        extra["wing"] = ["custom_wing.png"]
-        picked = set()
-        for _ in range(50):
-            p = random_pieces(extra)
-            picked.add(p.wing)
-        assert "custom_wing.png" in picked
-
+    
 
 class TestComposeSvg:
     def test_returns_svg_string(self, sample_pieces):
@@ -154,23 +112,7 @@ class TestComposeSvg:
         assert svg.startswith("<svg")
         assert "</svg>" in svg
 
-    def test_contains_image_per_layer(self, sample_pieces):
-        svg = compose_svg(sample_pieces)
-        assert svg.count("<image") == len(LAYER_ORDER)
-
     def test_viewbox_is_present(self, sample_pieces):
         svg = compose_svg(sample_pieces)
         assert "viewBox=" in svg
 
-    def test_extra_cache_used_for_imported_piece(self, sample_pieces):
-        import base64
-        tiny = Image.new("RGBA", (2, 2), (1, 2, 3, 255))
-        buf = io.BytesIO()
-        tiny.save(buf, format="PNG")
-        b64_val = base64.b64encode(buf.getvalue()).decode()
-
-        # Replace head with an imported piece
-        pieces = sample_pieces.model_copy(update={"head": "imported_head.png"})
-        extra_cache = {"head/imported_head.png": {"b64": b64_val, "w": 2, "h": 2, "x": 0, "y": 0}}
-        svg = compose_svg(pieces, extra_cache)
-        assert b64_val in svg

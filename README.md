@@ -27,6 +27,4 @@
 
 
 ## Problemi noti su cui sto lavorando
-- a volte è MOLTO lento a creare una chimera (sto verificando se è un problema della mia rete, dell'applicazione o del server su cui è installato)
-- a volte vengono create chimere con tre paia di zampe (purtroppo alcune zampe sono doppie!)
-- le zampe degli uccelli sono tagliate a metà
+- a volte vengono create chimere con tre paia di zampe (purtroppo alcune zampe sono doppie nei file originali!)
