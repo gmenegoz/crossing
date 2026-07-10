@@ -7,10 +7,16 @@ LAYERS = ["head", "body", "tail", "legfront", "legback", "wing"]
 class Pieces(BaseModel):
     head: str
     body: str
-    tail: str = None
-    legfront: str = None
-    legback: str = None
-    wing: str = None
+    tail: str | None = None
+    legfront: str | None = None
+    legback: str | None = None
+    wing: str | None = None
+
+
+class LayerOptions(BaseModel):
+    default: list[str]
+    imported: list[str]
+    optional: bool
 
 
 class Chimera(BaseModel):

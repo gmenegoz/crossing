@@ -41,13 +41,22 @@ class TestGetLayers:
         data = r.json()
         for layer in LAYERS:
             assert layer in data
-            assert len(data[layer]) > 0
+            assert len(data[layer]["default"]) > 0
 
     def test_values_are_png_filenames(self, client):
         data = client.get("/api/layers").json()
-        for layer, files in data.items():
-            for f in files:
+        for layer, opts in data.items():
+            for f in opts["default"] + opts["imported"]:
                 assert f.endswith(".png")
+
+    def test_optional_flag_matches_layer_probability(self, client):
+        data = client.get("/api/layers").json()
+        assert data["head"]["optional"] is False
+        assert data["body"]["optional"] is False
+        assert data["tail"]["optional"] is True
+        assert data["wing"]["optional"] is True
+        assert data["legfront"]["optional"] is True
+        assert data["legback"]["optional"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +264,7 @@ class TestImportPieces:
             files=[("files", ("head_extra.png", data, "image/png"))],
         )
         layers = client.get("/api/layers").json()
-        assert "head_extra.png" in layers["head"]
+        assert "head_extra.png" in layers["head"]["imported"]
 
     def test_unrecognised_layer_in_filename_skipped(self, client):
         data = _png_bytes()

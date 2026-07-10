@@ -7,12 +7,20 @@ from PIL import Image
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile
 from fastapi.responses import Response as RawResponse
 
-from app.composer import available_pngs, compose_svg, process_imported, random_pieces
+from app.composer import (
+    OPTIONAL_LAYERS,
+    available_pngs,
+    builtin_pngs,
+    compose_svg,
+    process_imported,
+    random_pieces,
+)
 from app.models import (
     LAYERS,
     Chimera,
     ChimeraListItem,
     CreateManualRequest,
+    LayerOptions,
     RenameRequest,
     UpdatePiecesRequest,
 )
@@ -49,9 +57,16 @@ def _img_to_b64(img: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 @router.get("/layers")
-def get_layers(store: ChimeraStore = Depends(get_store)) -> dict[str, list[str]]:
-    extra = store.imported_files()
-    return {layer: available_pngs(layer, extra) for layer in LAYERS}
+def get_layers(store: ChimeraStore = Depends(get_store)) -> dict[str, LayerOptions]:
+    imported = store.imported_files()
+    return {
+        layer: LayerOptions(
+            default=builtin_pngs(layer),
+            imported=imported.get(layer, []),
+            optional=layer in OPTIONAL_LAYERS,
+        )
+        for layer in LAYERS
+    }
 
 
 @router.post("/import-pieces")

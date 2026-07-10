@@ -224,6 +224,38 @@
     .piece-option.selected { border-color: #6a9fb5; }
     .piece-option:hover:not(.selected) { border-color: #555; }
 
+    .piece-option-none {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-size: 10px;
+      color: #999;
+      border-style: dashed;
+      padding: 4px;
+    }
+
+    .tab-row {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 4px;
+    }
+    .tab-btn {
+      background: #222;
+      color: #999;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      background: #333;
+      color: #e0e0e0;
+      border-color: #6a9fb5;
+    }
+
     #modal-footer {
       display: flex;
       justify-content: flex-end;
@@ -288,13 +320,18 @@ const LAYER_LABELS = {
   legfront: "Front legs", legback: "Back legs", wing: "Wing"
 };
 
+const NONE_LABELS = {
+  tail: "No Tail", wing: "No Wing",
+  legfront: "No Front legs", legback: "No Back legs",
+};
+
 const state = {
   chimeras: [],        // ChimeraListItem[]
   selected: null,      // full Chimera | null
-  layerOptions: {},    // {layer: [filename, ...]}
+  layerOptions: {},    // {layer: {default: [...], imported: [...], optional: bool}}
   modalMode: null,     // "create" | "edit"
-  modalSel: {},        // {layer: filename}
-  importedFiles: new Set(),  // filenames that came from user import
+  modalSel: {},        // {layer: filename | null}
+  modalTab: "default", // "default" | "imported" — global toggle for the whole modal
 };
 
 // ── API helpers ──────────────────────────────────────────
@@ -426,13 +463,15 @@ function openModal(mode) {
   document.getElementById("modal-title").textContent =
     mode === "create" ? "Create chimera manually" : `Edit ${state.selected.name}`;
 
+  state.modalTab = "default";
+
   if (mode === "edit" && state.selected) {
     state.modalSel = { ...state.selected.pieces };
   } else {
-    // Default: first available option per layer
+    // Default: first available option per layer (default tab, falling back to imported)
     state.modalSel = {};
-    for (const layer of Object.keys(state.layerOptions)) {
-      state.modalSel[layer] = state.layerOptions[layer][0];
+    for (const [layer, opts] of Object.entries(state.layerOptions)) {
+      state.modalSel[layer] = opts.default[0] ?? opts.imported[0] ?? null;
     }
   }
 
@@ -444,7 +483,22 @@ function buildModalBody() {
   const body = document.getElementById("modal-body");
   body.innerHTML = "";
 
-  for (const [layer, files] of Object.entries(state.layerOptions)) {
+  const tabRow = document.createElement("div");
+  tabRow.className = "tab-row";
+  for (const tabKey of ["default", "imported"]) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tab-btn" + (state.modalTab === tabKey ? " active" : "");
+    btn.textContent = tabKey === "default" ? "Default" : "Imported";
+    btn.addEventListener("click", () => {
+      state.modalTab = tabKey;
+      buildModalBody();
+    });
+    tabRow.appendChild(btn);
+  }
+  body.appendChild(tabRow);
+
+  for (const [layer, opts] of Object.entries(state.layerOptions)) {
     const section = document.createElement("div");
     section.className = "layer-section";
 
@@ -455,6 +509,19 @@ function buildModalBody() {
     const strip = document.createElement("div");
     strip.className = "layer-strip";
 
+    if (opts.optional) {
+      const noneDiv = document.createElement("div");
+      noneDiv.className = "piece-option piece-option-none" +
+        (state.modalSel[layer] == null ? " selected" : "");
+      noneDiv.textContent = NONE_LABELS[layer] || "None";
+      noneDiv.addEventListener("click", () => {
+        state.modalSel[layer] = null;
+        buildModalBody();
+      });
+      strip.appendChild(noneDiv);
+    }
+
+    const files = opts[state.modalTab];
     for (const file of files) {
       const div = document.createElement("div");
       div.className = "piece-option" + (state.modalSel[layer] === file ? " selected" : "");
@@ -462,7 +529,7 @@ function buildModalBody() {
       div.dataset.file  = file;
 
       const img = document.createElement("img");
-      img.src = state.importedFiles.has(file)
+      img.src = state.modalTab === "imported"
         ? `/api/imported-preview/${layer}/${encodeURIComponent(file)}`
         : `/assets/${layer}/${file}`;
       img.alt = file;
@@ -470,8 +537,7 @@ function buildModalBody() {
 
       div.addEventListener("click", () => {
         state.modalSel[layer] = file;
-        strip.querySelectorAll(".piece-option").forEach(el => el.classList.remove("selected"));
-        div.classList.add("selected");
+        buildModalBody();
       });
 
       strip.appendChild(div);
@@ -537,12 +603,7 @@ document.getElementById("file-input").addEventListener("change", async (e) => {
   const res = await fetch("/api/import-pieces", { method: "POST", body: form });
   if (!res.ok) { console.error("Import failed", await res.text()); return; }
 
-  const imported = await res.json(); // {layer: [filename, ...]}
-  for (const fnames of Object.values(imported)) {
-    for (const fname of fnames) state.importedFiles.add(fname);
-  }
-
-  // Merge imported filenames into layerOptions and refresh layers from server
+  // Refresh layers from server so the new imported files show up
   state.layerOptions = await api("GET", "/layers");
 
   // Reset file input so the same folder can be re-selected

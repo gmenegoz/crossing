@@ -33,6 +33,8 @@ LAYER_PROBABILITY = {
     "legfront": 0.95
 }
 
+OPTIONAL_LAYERS = {layer for layer, p in LAYER_PROBABILITY.items() if p < 1}
+
 
 # Global cache for built-in assets: "layer_variant/filename" -> {b64, w, h}
 _cache: dict[str, dict] = {}
@@ -106,8 +108,12 @@ _build_cache()
 
 
 
+def builtin_pngs(layer: str) -> list[str]:
+    return sorted(p.name for p in (ASSETS_DIR / layer).glob("*.png"))
+
+
 def available_pngs(layer: str, extra_files: dict[str, list[str]] | None = None) -> list[str]:
-    builtin = sorted(p.name for p in (ASSETS_DIR / layer).glob("*.png"))
+    builtin = builtin_pngs(layer)
     if extra_files and extra_files.get(layer):
         return builtin + extra_files[layer]
     return builtin
