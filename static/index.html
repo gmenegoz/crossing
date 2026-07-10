@@ -111,6 +111,44 @@
       justify-content: center;
       overflow: hidden;
     }
+
+    #lang-switcher {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 10;
+    }
+    #lang-btn {
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      background: #2a2a2a;
+      color: #e0e0e0;
+      transition: background 0.15s;
+    }
+    #lang-btn:hover { background: #3a3a3a; }
+    #lang-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 0;
+      list-style: none;
+      background: #222;
+      border: 1px solid #333;
+      border-radius: 6px;
+      overflow: hidden;
+      min-width: 110px;
+    }
+    #lang-menu li {
+      padding: 7px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    #lang-menu li:hover { background: #333; }
+    #lang-menu li.active { color: #6a9fb5; font-weight: 700; }
     #stage-svg svg {
       max-width: 100%;
       max-height: 100%;
@@ -293,6 +331,10 @@
 <!-- ── Stage ──────────────────────────────────────────── -->
 <!-- TODO Different message if Chieras are there or not -->
 <main id="stage">
+  <div id="lang-switcher">
+    <button id="lang-btn" type="button"></button>
+    <ul id="lang-menu" style="display:none"></ul>
+  </div>
   <div id="stage-svg"></div>
   <p id="stage-empty">No chimeras yet.<br>Create one with the buttons on the left.</p>
   <div id="stage-actions" style="display:none">
@@ -315,15 +357,74 @@
 </dialog>
 
 <script>
-const LAYER_LABELS = {
-  head: "Head", body: "Body", tail: "Tail",
-  legfront: "Front legs", legback: "Back legs", wing: "Wing"
+const TRANSLATIONS = {
+  en: {
+    random: "Random", manual: "Manual", import: "Import",
+    stageEmpty: "No chimeras yet.<br>Create one with the buttons on the left.",
+    delete: "Delete", download: "Download SVG", edit: "Edit",
+    selectPieces: "Select pieces",
+    createManually: "Create chimera manually",
+    editName: "Edit {name}",
+    cancel: "Cancel", compose: "Compose",
+    tabDefault: "Default", tabImported: "Imported",
+    confirmDelete: 'Delete "{name}"?',
+    layerHead: "Head", layerBody: "Body", layerTail: "Tail",
+    layerLegfront: "Front legs", layerLegback: "Back legs", layerWing: "Wing",
+    noneTail: "No Tail", noneWing: "No Wing",
+    noneLegfront: "No Front legs", noneLegback: "No Back legs",
+    noneGeneric: "None",
+  },
+  it: {
+    random: "Casuale", manual: "Manuale", import: "Importa",
+    stageEmpty: "Ancora nessuna chimera.<br>Creane una con i pulsanti a sinistra.",
+    delete: "Elimina", download: "Scarica SVG", edit: "Modifica",
+    selectPieces: "Seleziona i pezzi",
+    createManually: "Crea chimera manualmente",
+    editName: "Modifica {name}",
+    cancel: "Annulla", compose: "Componi",
+    tabDefault: "Predefiniti", tabImported: "Importati",
+    confirmDelete: 'Eliminare "{name}"?',
+    layerHead: "Testa", layerBody: "Corpo", layerTail: "Coda",
+    layerLegfront: "Zampe in primo piano", layerLegback: "Zampe in secondo piano", layerWing: "Ali",
+    noneTail: "Senza coda", noneWing: "Senza ali",
+    noneLegfront: "Senza zampe in primo piano", noneLegback: "Senza zampe in secondo piano",
+    noneGeneric: "Nessuno",
+  },
+};
+const LANG_NAMES = { en: "English", it: "Italiano" };
+const LANG_CODE3 = { en: "ENG", it: "ITA" };
+
+const LAYER_KEYS = {
+  head: "layerHead", body: "layerBody", tail: "layerTail",
+  legfront: "layerLegfront", legback: "layerLegback", wing: "layerWing",
+};
+const NONE_KEYS = {
+  tail: "noneTail", wing: "noneWing",
+  legfront: "noneLegfront", legback: "noneLegback",
 };
 
-const NONE_LABELS = {
-  tail: "No Tail", wing: "No Wing",
-  legfront: "No Front legs", legback: "No Back legs",
-};
+function detectLang() {
+  const saved = localStorage.getItem("lang");
+  if (saved && TRANSLATIONS[saved]) return saved;
+  const browserLangs = navigator.languages || [navigator.language];
+  for (const bl of browserLangs) {
+    const code = bl.slice(0, 2).toLowerCase();
+    if (TRANSLATIONS[code]) return code;
+  }
+  return "en";
+}
+
+function t(key, params) {
+  const str = (TRANSLATIONS[state.lang] && TRANSLATIONS[state.lang][key]) ?? TRANSLATIONS.en[key] ?? key;
+  if (!params) return str;
+  return str.replace(/\{(\w+)\}/g, (_, k) => params[k] ?? "");
+}
+
+function setLang(code) {
+  state.lang = code;
+  localStorage.setItem("lang", code);
+  applyTranslations();
+}
 
 const state = {
   chimeras: [],        // ChimeraListItem[]
@@ -332,6 +433,7 @@ const state = {
   modalMode: null,     // "create" | "edit"
   modalSel: {},        // {layer: filename | null}
   modalTab: "default", // "default" | "imported" — global toggle for the whole modal
+  lang: detectLang(),
 };
 
 // ── API helpers ──────────────────────────────────────────
@@ -437,7 +539,7 @@ function startRename(id, nameEl) {
 // ── Delete ───────────────────────────────────────────────
 document.getElementById("btn-delete").addEventListener("click", async () => {
   if (!state.selected) return;
-  if (!confirm(`Delete "${state.selected.name}"?`)) return;
+  if (!confirm(t("confirmDelete", { name: state.selected.name }))) return;
   await api("DELETE", `/chimeras/${state.selected.id}`);
   state.chimeras = state.chimeras.filter(c => c.id !== state.selected.id);
   state.selected = null;
@@ -461,7 +563,7 @@ document.getElementById("btn-download").addEventListener("click", () => {
 function openModal(mode) {
   state.modalMode = mode;
   document.getElementById("modal-title").textContent =
-    mode === "create" ? "Create chimera manually" : `Edit ${state.selected.name}`;
+    mode === "create" ? t("createManually") : t("editName", { name: state.selected.name });
 
   state.modalTab = "default";
 
@@ -489,7 +591,7 @@ function buildModalBody() {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "tab-btn" + (state.modalTab === tabKey ? " active" : "");
-    btn.textContent = tabKey === "default" ? "Default" : "Imported";
+    btn.textContent = tabKey === "default" ? t("tabDefault") : t("tabImported");
     btn.addEventListener("click", () => {
       state.modalTab = tabKey;
       buildModalBody();
@@ -503,7 +605,7 @@ function buildModalBody() {
     section.className = "layer-section";
 
     const label = document.createElement("label");
-    label.textContent = LAYER_LABELS[layer] || layer;
+    label.textContent = LAYER_KEYS[layer] ? t(LAYER_KEYS[layer]) : layer;
     section.appendChild(label);
 
     const strip = document.createElement("div");
@@ -513,7 +615,7 @@ function buildModalBody() {
       const noneDiv = document.createElement("div");
       noneDiv.className = "piece-option piece-option-none" +
         (state.modalSel[layer] == null ? " selected" : "");
-      noneDiv.textContent = NONE_LABELS[layer] || "None";
+      noneDiv.textContent = NONE_KEYS[layer] ? t(NONE_KEYS[layer]) : t("noneGeneric");
       noneDiv.addEventListener("click", () => {
         state.modalSel[layer] = null;
         buildModalBody();
@@ -610,8 +712,57 @@ document.getElementById("file-input").addEventListener("change", async (e) => {
   e.target.value = "";
 });
 
+// ── Language switcher ────────────────────────────────────
+function applyTranslations() {
+  document.getElementById("btn-random").textContent = t("random");
+  document.getElementById("btn-manual").textContent = t("manual");
+  document.getElementById("btn-import").textContent = t("import");
+  document.getElementById("stage-empty").innerHTML = t("stageEmpty");
+  document.getElementById("btn-delete").textContent = t("delete");
+  document.getElementById("btn-download").textContent = t("download");
+  document.getElementById("btn-edit").textContent = t("edit");
+  document.getElementById("modal-title").textContent = t("selectPieces");
+  document.getElementById("btn-cancel").textContent = t("cancel");
+  document.getElementById("btn-compose").textContent = t("compose");
+
+  document.getElementById("lang-btn").textContent = LANG_CODE3[state.lang] || state.lang.toUpperCase();
+  renderLangMenu();
+
+  renderList();
+  renderStage();
+  if (document.getElementById("modal").open) buildModalBody();
+}
+
+function renderLangMenu() {
+  const menu = document.getElementById("lang-menu");
+  menu.innerHTML = "";
+  for (const code of Object.keys(TRANSLATIONS)) {
+    const li = document.createElement("li");
+    li.textContent = LANG_NAMES[code] || code;
+    if (code === state.lang) li.classList.add("active");
+    li.addEventListener("click", () => {
+      setLang(code);
+      menu.style.display = "none";
+    });
+    menu.appendChild(li);
+  }
+}
+
+document.getElementById("lang-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const menu = document.getElementById("lang-menu");
+  menu.style.display = menu.style.display === "none" ? "block" : "none";
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#lang-switcher")) {
+    document.getElementById("lang-menu").style.display = "none";
+  }
+});
+
 // ── Boot ─────────────────────────────────────────────────
 async function init() {
+  applyTranslations();
+
   const [layers, chimeras] = await Promise.all([
     api("GET", "/layers"),
     api("GET", "/chimeras"),
