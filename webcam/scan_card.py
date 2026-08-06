@@ -44,23 +44,30 @@ def order_corners(pts: np.ndarray) -> np.ndarray:
 
 
 RING_CONTRAST_RATIO = 0.6  # surrounding black frame must be this much darker than the rectangle
+MIN_BORDER_SAMPLE = 1  # minimum px of margin needed on a side to trust its darkness sample
 
 
 def is_framed_by_black_border(gray: np.ndarray, x: int, y: int, w: int, h: int) -> bool:
     """Check that a candidate white rectangle is fully enclosed by a darker
-    border on all 4 sides (not touching the image edge, and not just
-    adjacent to another bright region like a stray photo or lightbox)."""
+    border on all 4 sides (not just adjacent to another bright region like a
+    stray photo or lightbox). Padding is clamped to whatever margin the image
+    actually has, so a rectangle framed close to the photo's edge can still
+    be validated with a thinner sample on that side."""
     img_height, img_width = gray.shape
     pad = max(10, int(0.04 * max(w, h)))
 
-    if x - pad < 0 or y - pad < 0 or x + w + pad > img_width or y + h + pad > img_height:
+    top_pad = min(pad, y)
+    bottom_pad = min(pad, img_height - (y + h))
+    left_pad = min(pad, x)
+    right_pad = min(pad, img_width - (x + w))
+    if min(top_pad, bottom_pad, left_pad, right_pad) < MIN_BORDER_SAMPLE:
         return False
 
     inner_mean = gray[y : y + h, x : x + w].mean()
-    top = gray[y - pad : y, x : x + w]
-    bottom = gray[y + h : y + h + pad, x : x + w]
-    left = gray[y : y + h, x - pad : x]
-    right = gray[y : y + h, x + w : x + w + pad]
+    top = gray[y - top_pad : y, x : x + w]
+    bottom = gray[y + h : y + h + bottom_pad, x : x + w]
+    left = gray[y : y + h, x - left_pad : x]
+    right = gray[y : y + h, x + w : x + w + right_pad]
 
     return all(side.mean() < inner_mean * RING_CONTRAST_RATIO for side in (top, bottom, left, right))
 
@@ -69,8 +76,14 @@ def find_frame_corners(image: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Dark speckle noise in the artwork can touch the black frame border
+    # (e.g. a jagged illustration edge close to the rectangle's edge),
+    # cutting a notch into the white rectangle's contour. Closing bridges
+    # such thin gaps; is_framed_by_black_border rejects any case where this
+    # accidentally merges in a neighboring bright object instead.
+    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((45, 45), np.uint8))
 
-    contours, _ = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(closed, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         raise FrameNotFoundError("no contours found")
 
@@ -126,6 +139,20 @@ def warp_to_rectangle(image: np.ndarray, corners: np.ndarray) -> np.ndarray:
     return cv2.warpPerspective(image, matrix, (warped_width, warped_height))
 
 
+TRIM_FRACTION = 0.015  # shave this fraction off each side to drop stray black-frame slivers
+
+
+def trim_border(warped: np.ndarray) -> np.ndarray:
+    """Detected corners can include a sliver of the black frame at the edges
+    (perspective/threshold detection isn't pixel-perfect); shave a small
+    margin off each side before it's treated as foreground by background
+    removal."""
+    height, width = warped.shape[:2]
+    trim_x = max(1, int(round(width * TRIM_FRACTION)))
+    trim_y = max(1, int(round(height * TRIM_FRACTION)))
+    return warped[trim_y : height - trim_y, trim_x : width - trim_x]
+
+
 def check_aspect_ratio(warped: np.ndarray, filename: str, target_size: tuple[int, int]) -> None:
     target_width, target_height = target_size
     target_ratio = target_width / target_height
@@ -151,6 +178,57 @@ def correct_rotation(warped: np.ndarray, target_size: tuple[int, int]) -> np.nda
     return warped
 
 
+FLOOD_DIFF = 2  # per-step gradient tolerance for border flood-fill
+FLOOD_SEED_STEP = 15  # px spacing between seed points along the image border
+
+
+def _background_mask_by_flood_fill(image: np.ndarray) -> np.ndarray:
+    """Classify background as pixels reachable from the image border through
+    a chain of similarly-toned neighbors. A brightness-only classifier (e.g.
+    Otsu) can't tell a bright highlight inside the artwork from real page
+    background and punches holes in it; flood-fill can't reach an interior
+    highlight unless there's a real gap in the ink outline around it, so
+    holes are only created where the artwork's own outline is broken."""
+    height, width = image.shape[:2]
+    background_mask = np.zeros((height, width), np.uint8)
+
+    xs = list(range(0, width, FLOOD_SEED_STEP)) + [width - 1]
+    ys = list(range(0, height, FLOOD_SEED_STEP)) + [height - 1]
+    seeds = [(x, 0) for x in xs] + [(x, height - 1) for x in xs]
+    seeds += [(0, y) for y in ys] + [(width - 1, y) for y in ys]
+
+    for seed_x, seed_y in seeds:
+        if background_mask[seed_y, seed_x]:
+            continue  # already reached by a previous flood
+        flood_mask = np.zeros((height + 2, width + 2), np.uint8)
+        cv2.floodFill(
+            image.copy(),
+            flood_mask,
+            (seed_x, seed_y),
+            newVal=0,
+            loDiff=(FLOOD_DIFF,) * 3,
+            upDiff=(FLOOD_DIFF,) * 3,
+        )
+        background_mask |= flood_mask[1:-1, 1:-1] * 255
+
+    return background_mask
+
+
+def remove_white_background(image: np.ndarray) -> np.ndarray:
+    """Convert the cropped artwork to RGBA, making the white page background
+    transparent while keeping bright regions inside the artwork itself
+    (e.g. highlights) opaque."""
+    blurred = cv2.GaussianBlur(image, (5, 5), 0)
+    background_mask = _background_mask_by_flood_fill(blurred)
+    foreground_mask = cv2.morphologyEx(
+        255 - background_mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8)
+    )
+
+    bgra = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
+    bgra[:, :, 3] = foreground_mask
+    return bgra
+
+
 def process_image(jpg_path: Path) -> Path:
     image = cv2.imread(str(jpg_path))
     if image is None:
@@ -161,12 +239,14 @@ def process_image(jpg_path: Path) -> Path:
     corners = find_frame_corners(image)
     warped = warp_to_rectangle(image, corners)
     warped = correct_rotation(warped, target_size)
+    warped = trim_border(warped)
     check_aspect_ratio(warped, jpg_path.name, target_size)
 
     resized = cv2.resize(warped, target_size, interpolation=cv2.INTER_AREA)
+    transparent = remove_white_background(resized)
 
     output_path = jpg_path.with_suffix(".png")
-    cv2.imwrite(str(output_path), resized)
+    cv2.imwrite(str(output_path), transparent)
     return output_path
 
 
