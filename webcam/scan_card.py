@@ -19,16 +19,117 @@ TARGET_SIZE = {
 DEFAULT_TARGET = (367, 483)
 ASPECT_TOLERANCE = 0.05
 
+# Piece markers are a small saturated square in one corner of the white
+# rectangle. Hues are spaced 60 degrees apart around the wheel (OpenCV's
+# 0-179 hue range) to stay distinguishable under lighting variation.
+PIECE_HUES = {
+    "head": 0,
+    "body": 120,
+    "legback": 60,
+    "legfront": 30,
+    "tail": 90,
+    "wing": 150,
+}
+MARKER_HUE_TOLERANCE = 15  # max distance from a palette hue to accept a match
+MARKER_SATURATION_THRESHOLD = 80
+MARKER_MIN_PIXELS = 150  # below this, treat as noise rather than a real marker
+MARKER_CORNER_FRACTION = 0.15  # fraction of width/height sampled at each corner
 
-def target_size_for(filename: str) -> tuple[int, int]:
+
+def piece_from_filename(filename: str) -> str | None:
     stem = Path(filename).stem.lower()
-    for key, size in TARGET_SIZE.items():
-        if key in stem:
-            return size
-    return DEFAULT_TARGET
+    for piece in TARGET_SIZE:
+        if piece in stem:
+            return piece
+    return None
+
+
+def _hue_distance(a: float, b: float) -> float:
+    """Circular distance between two hues on OpenCV's 0-179 scale."""
+    d = abs(a - b) % 180
+    return min(d, 180 - d)
+
+
+def find_marker_corner(warped: np.ndarray) -> tuple[str, int, int, int, int] | None:
+    """Look for a saturated marker square in each corner of the (still
+    unrotated) warped rectangle. Returns (corner_name, x, y, w, h) for the
+    corner region with the largest saturated blob, or None if no corner has
+    enough saturated pixels to be considered a real marker."""
+    height, width = warped.shape[:2]
+    ch = int(height * MARKER_CORNER_FRACTION)
+    cw = int(width * MARKER_CORNER_FRACTION)
+    regions = {
+        "TL": (0, 0, cw, ch),
+        "TR": (width - cw, 0, cw, ch),
+        "BL": (0, height - ch, cw, ch),
+        "BR": (width - cw, height - ch, cw, ch),
+    }
+
+    best = None
+    for name, (x, y, w, h) in regions.items():
+        region = warped[y : y + h, x : x + w]
+        hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+        saturated = hsv[:, :, 1] > MARKER_SATURATION_THRESHOLD
+        count = int(saturated.sum())
+        if count >= MARKER_MIN_PIXELS and (best is None or count > best[1]):
+            hue = float(np.median(hsv[:, :, 0][saturated]))
+            best = (name, count, hue, (x, y, w, h))
+
+    if best is None:
+        return None
+    name, _count, hue, (x, y, w, h) = best
+    return name, hue, x, y, w, h
+
+
+def piece_from_marker_hue(hue: float) -> str | None:
+    matches = [
+        piece for piece, target_hue in PIECE_HUES.items()
+        if _hue_distance(hue, target_hue) <= MARKER_HUE_TOLERANCE
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def detect_piece_by_marker(warped: np.ndarray) -> tuple[str, tuple[int, int, int, int]] | None:
+    """Return (piece_name, (x, y, w, h)) for the marker's corner region, or
+    None if no confident marker was found."""
+    found = find_marker_corner(warped)
+    if found is None:
+        return None
+    _corner_name, hue, x, y, w, h = found
+    piece = piece_from_marker_hue(hue)
+    if piece is None:
+        return None
+    return piece, (x, y, w, h)
+
+
+def erase_marker(warped: np.ndarray, region: tuple[int, int, int, int]) -> np.ndarray:
+    """Paint over the marker's corner with the page's background color so it
+    blends in and is dropped by remove_white_background rather than
+    surviving as a colored patch in the final output."""
+    x, y, w, h = region
+    height, width = warped.shape[:2]
+    # Sample background color just outside the marker region, on whichever
+    # side has room, to approximate the local page tone under that corner.
+    if x > 0:
+        sample = warped[y : y + h, max(0, x - 10) : x]
+    elif x + w < width:
+        sample = warped[y : y + h, x + w : min(width, x + w + 10)]
+    elif y > 0:
+        sample = warped[max(0, y - 10) : y, x : x + w]
+    else:
+        sample = warped[y + h : min(height, y + h + 10), x : x + w]
+
+    background_color = sample.reshape(-1, 3).mean(axis=0) if sample.size else np.array([255, 255, 255])
+    erased = warped.copy()
+    erased[y : y + h, x : x + w] = background_color
+    return erased
 
 
 class FrameNotFoundError(Exception):
+    pass
+
+
+class PieceNotIdentifiedError(Exception):
     pass
 
 
@@ -229,15 +330,37 @@ def remove_white_background(image: np.ndarray) -> np.ndarray:
     return bgra
 
 
+def next_available_output_path(folder: Path, piece: str) -> Path:
+    """Smallest-numbered <piece><n>.png in folder that doesn't already exist."""
+    n = 1
+    while True:
+        candidate = folder / f"{piece}{n}.png"
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
 def process_image(jpg_path: Path) -> Path:
     image = cv2.imread(str(jpg_path))
     if image is None:
         raise FrameNotFoundError(f"could not read image: {jpg_path}")
 
-    target_size = target_size_for(jpg_path.name)
-
     corners = find_frame_corners(image)
     warped = warp_to_rectangle(image, corners)
+
+    marker = detect_piece_by_marker(warped)
+    if marker is not None:
+        piece, region = marker
+        warped = erase_marker(warped, region)
+    else:
+        piece = piece_from_filename(jpg_path.name)
+
+    if piece is None:
+        raise PieceNotIdentifiedError(
+            "no color marker or filename match identifies the piece type"
+        )
+
+    target_size = TARGET_SIZE[piece]
     warped = correct_rotation(warped, target_size)
     warped = trim_border(warped)
     check_aspect_ratio(warped, jpg_path.name, target_size)
@@ -245,7 +368,7 @@ def process_image(jpg_path: Path) -> Path:
     resized = cv2.resize(warped, target_size, interpolation=cv2.INTER_AREA)
     transparent = remove_white_background(resized)
 
-    output_path = jpg_path.with_suffix(".png")
+    output_path = next_available_output_path(jpg_path.parent, piece)
     cv2.imwrite(str(output_path), transparent)
     return output_path
 
@@ -256,14 +379,13 @@ def main() -> int:
         return 2
 
     jpg_path = Path(sys.argv[1])
-    target_width, target_height = target_size_for(jpg_path.name)
     try:
         output_path = process_image(jpg_path)
-    except FrameNotFoundError as exc:
+    except (FrameNotFoundError, PieceNotIdentifiedError) as exc:
         print(f"[WARN] {jpg_path.name}: {exc}, skipping", file=sys.stderr)
         return 1
 
-    print(f"[OK] {jpg_path.name} -> {output_path.name} ({target_width}x{target_height})")
+    print(f"[OK] {jpg_path.name} -> {output_path.name}")
     return 0
 
 

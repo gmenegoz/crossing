@@ -24,7 +24,6 @@ if [[ ! -d "$FOLDER" ]]; then
 fi
 
 processed=0
-skipped_existing=0
 skipped_failed=0
 
 shopt -s nullglob nocaseglob
@@ -32,13 +31,6 @@ files=("$FOLDER"/*.jpg)
 shopt -u nocaseglob
 
 for jpg in "${files[@]}"; do
-    png="${jpg%.*}.png"
-    if [[ -f "$png" ]]; then
-        echo "[SKIP] $(basename "$jpg"): $(basename "$png") already exists"
-        skipped_existing=$((skipped_existing + 1))
-        continue
-    fi
-
     if "$PYTHON" "$SCRIPT_DIR/scan_card.py" "$jpg"; then
         processed=$((processed + 1))
     else
@@ -47,4 +39,4 @@ for jpg in "${files[@]}"; do
 done
 
 echo
-echo "Done: $processed processed, $skipped_existing skipped (existing), $skipped_failed skipped (failed)"
+echo "Done: $processed processed, $skipped_failed skipped (failed)"
