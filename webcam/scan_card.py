@@ -540,7 +540,53 @@ def next_available_output_path(folder: Path, piece: str) -> Path:
         n += 1
 
 
-def process_image(jpg_path: Path) -> Path:
+def load_config(config_path: Path) -> dict[str, str]:
+    """Parse config.txt's simple KEY=value lines into a dict."""
+    config: dict[str, str] = {}
+    for line in config_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        config[key.strip().upper()] = value.strip()
+    return config
+
+
+class ConfigError(Exception):
+    pass
+
+
+def resolve_run_config(config_path: Path, folder_override: str | None) -> tuple[Path, int, Path | None]:
+    """Resolve FOLDER/INDEX/DESTINATION for a batch run. FOLDER can come from
+    a CLI-provided override (folder_override) or config.txt; INDEX and
+    DESTINATION always come from config.txt regardless of how FOLDER was
+    chosen, per the agreed behavior for combining CLI and config-file usage."""
+    if not config_path.is_file():
+        raise ConfigError(f"config file not found: {config_path}")
+    config = load_config(config_path)
+
+    folder_str = folder_override if folder_override is not None else config.get("FOLDER")
+    if not folder_str:
+        raise ConfigError("no FOLDER given on the command line or in config.txt")
+    folder = Path(folder_str)
+    if not folder.is_dir():
+        raise ConfigError(f"'{folder}' is not a directory")
+
+    index_str = config.get("INDEX")
+    if not index_str:
+        raise ConfigError("config.txt is missing INDEX=<number>")
+    try:
+        index = int(index_str)
+    except ValueError:
+        raise ConfigError(f"config.txt's INDEX is not an integer: '{index_str}'") from None
+
+    destination_str = config.get("DESTINATION")
+    destination = Path(destination_str) if destination_str else None
+
+    return folder, index, destination
+
+
+def process_image(jpg_path: Path, index: int | None, destination: Path | None) -> Path:
     image = cv2.imread(str(jpg_path))
     if image is None:
         raise FrameNotFoundError(f"could not read image: {jpg_path}")
@@ -567,19 +613,66 @@ def process_image(jpg_path: Path) -> Path:
     resized = cv2.resize(warped, target_size, interpolation=cv2.INTER_AREA)
     transparent = remove_white_background(resized)
 
-    output_path = next_available_output_path(jpg_path.parent, piece)
+    if index is None:
+        output_path = next_available_output_path(jpg_path.parent, piece)
+    else:
+        output_path = jpg_path.parent / f"{piece}{index}.png"
     cv2.imwrite(str(output_path), transparent)
+
+    if destination is not None:
+        destination.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(destination / output_path.name), transparent)
+
     return output_path
 
 
+def run_batch(config_path: Path, folder_override: str | None) -> int:
+    """Process every JPG in FOLDER (from config.txt, optionally overridden by
+    folder_override), naming each output <piece><INDEX>.png and optionally
+    copying it to DESTINATION. This is the shared implementation behind both
+    scan_folder.sh and scan_folder.bat, so config parsing and the
+    FOLDER/INDEX/DESTINATION rules live in one place rather than being
+    duplicated in bash and batch syntax."""
+    try:
+        folder, index, destination = resolve_run_config(config_path, folder_override)
+    except ConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    jpg_paths = sorted(folder.glob("*.jpg")) + sorted(folder.glob("*.JPG"))
+    processed = 0
+    skipped_failed = 0
+    for jpg_path in jpg_paths:
+        try:
+            output_path = process_image(jpg_path, index, destination)
+        except (FrameNotFoundError, PieceNotIdentifiedError) as exc:
+            print(f"[ERR] {jpg_path.name}: {exc}, skipping", file=sys.stderr)
+            skipped_failed += 1
+            continue
+        print(f"[OK] {jpg_path.name} -> {output_path.name}")
+        processed += 1
+
+    print(f"\nDone: {processed} processed, {skipped_failed} skipped (failed)")
+    return 0
+
+
 def main() -> int:
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <path/to/image.jpg>", file=sys.stderr)
+    if len(sys.argv) >= 2 and sys.argv[1] == "--config":
+        if len(sys.argv) not in (3, 4):
+            print(f"Usage: {sys.argv[0]} --config <config.txt> [folder]", file=sys.stderr)
+            return 2
+        config_path = Path(sys.argv[2])
+        folder_override = sys.argv[3] if len(sys.argv) == 4 else None
+        return run_batch(config_path, folder_override)
+
+    if len(sys.argv) not in (2, 3):
+        print(f"Usage: {sys.argv[0]} <path/to/image.jpg> [index]", file=sys.stderr)
         return 2
 
     jpg_path = Path(sys.argv[1])
+    index = int(sys.argv[2]) if len(sys.argv) == 3 else None
     try:
-        output_path = process_image(jpg_path)
+        output_path = process_image(jpg_path, index, destination=None)
     except (FrameNotFoundError, PieceNotIdentifiedError) as exc:
         print(f"[ERR] {jpg_path.name}: {exc}, skipping", file=sys.stderr)
         return 1

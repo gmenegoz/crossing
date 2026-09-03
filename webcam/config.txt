@@ -1,1 +1,3 @@
 FOLDER=C:\path\to\folder
+INDEX=1
+DESTINATION=/home/mene/wow
