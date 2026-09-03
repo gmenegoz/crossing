@@ -409,14 +409,21 @@ def warp_to_rectangle(image: np.ndarray, corners: np.ndarray) -> np.ndarray:
     return cv2.warpPerspective(image, matrix, (warped_width, warped_height))
 
 
-TRIM_FRACTION = 0.015  # shave this fraction off each side to drop stray black-frame slivers
+TRIM_FRACTION = 0.045  # shave this fraction off each side to drop stray black-frame slivers
 
 
 def trim_border(warped: np.ndarray) -> np.ndarray:
     """Detected corners can include a sliver of the black frame at the edges
-    (perspective/threshold detection isn't pixel-perfect); shave a small
+    (perspective/threshold detection isn't pixel-perfect, and expand_corners
+    deliberately over-shoots outward to avoid clipping artwork); shave a
     margin off each side before it's treated as foreground by background
-    removal."""
+    removal. Sized to match expand_corners' overshoot (~6%) rather than just
+    covering detection jitter: measured against real photos, the black
+    canvas/backdrop takes 2-6% of the image to fade to clean white paper, so
+    trimming less than that leaves a visible dark sliver around the artwork.
+    A user who draws too close to this margin may lose a bit of artwork to
+    the trim — acceptable, since removing the frame takes priority and they
+    can redraw with more clearance."""
     height, width = warped.shape[:2]
     trim_x = max(1, int(round(width * TRIM_FRACTION)))
     trim_y = max(1, int(round(height * TRIM_FRACTION)))
