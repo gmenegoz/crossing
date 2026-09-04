@@ -67,17 +67,6 @@ def split_legs(img: Image.Image) -> Image.Image:
         
     return legs
 
-
-
-def _split_legs(layer: str, img: Image.Image) -> Image.Image:
-    """Apply left/right split (for leg layers) and autocrop to content bounding box."""
-    w, h = img.size
-    if layer.endswith("_l"):
-        img = img.crop((0, 0, w // 2, h))
-    elif layer.endswith("_r"):
-        img = img.crop((w // 2, 0, w, h))
-    return img
-
 def _get_offset(img: Image.Image) -> (int, int):
     bbox = img.getbbox()
     return (bbox[0], bbox[1]) if bbox else (0,0)
@@ -182,7 +171,7 @@ def compose_svg(pieces: Pieces, extra_cache: dict[str, dict] | None = None) -> s
 
 # TODO add id to each part
     images_xml = "\n".join(
-        f'    <image x="{p["x"] + 120}" y="{p["y"] + 90}" width="{p["w"]}" height="{p["h"]}" '
+        f'    <image id="{p["layer"]}" x="{p["x"] + 120}" y="{p["y"] + 90}" width="{p["w"]}" height="{p["h"]}" '
         f'xlink:href="data:image/png;base64,{p["b64"]}" />'
         for p in parts
     )
