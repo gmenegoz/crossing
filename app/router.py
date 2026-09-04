@@ -19,6 +19,7 @@ from app.models import (
     LAYERS,
     Chimera,
     ChimeraListItem,
+    ComposePreviewResponse,
     CreateManualRequest,
     LayerOptions,
     RenameRequest,
@@ -126,6 +127,14 @@ def create_manual(body: CreateManualRequest, store: ChimeraStore = Depends(get_s
     )
     store.add(chimera)
     return chimera
+
+
+@router.post("/compose-preview")
+def compose_preview(body: CreateManualRequest, store: ChimeraStore = Depends(get_store)) -> ComposePreviewResponse:
+    try:
+        return ComposePreviewResponse(svg=compose_svg(body.pieces, store.imported_cache()))
+    except Exception:
+        return ComposePreviewResponse(svg=None)
 
 
 @router.get("/chimeras/{id}")

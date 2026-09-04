@@ -44,3 +44,7 @@ class UpdatePiecesRequest(BaseModel):
 
 class RenameRequest(BaseModel):
     name: str
+
+
+class ComposePreviewResponse(BaseModel):
+    svg: str | None = None
