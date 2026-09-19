@@ -173,27 +173,10 @@ def detect_piece_by_marker(warped: np.ndarray) -> MarkerDetectionResult:
 
 
 def erase_marker(warped: np.ndarray, region: tuple[int, int, int, int]) -> np.ndarray:
-    """Paint over the marker's corner with the page's background color so it
-    blends in and is dropped by remove_white_background rather than
-    surviving as a colored patch in the final output."""
-    x, y, w, h = region
     height, width = warped.shape[:2]
-    # Sample background color just outside the marker region, on whichever
-    # side has room, to approximate the local page tone under that corner.
-    if x > 0:
-        sample = warped[y : y + h, max(0, x - 10) : x]
-    elif x + w < width:
-        sample = warped[y : y + h, x + w : min(width, x + w + 10)]
-    elif y > 0:
-        sample = warped[max(0, y - 10) : y, x : x + w]
-    else:
-        sample = warped[y + h : min(height, y + h + 10), x : x + w]
-
-    background_color = sample.reshape(-1, 3).mean(axis=0) if sample.size else np.array([255, 255, 255])
     erased = warped.copy()
-    erased[y : y + h, x : x + w] = background_color
+    erased[height - 50 : height, width - 50: width] = np.array([0, 0, 0,0])
     return erased
-
 
 class FrameNotFoundError(Exception):
     pass
@@ -597,7 +580,6 @@ def process_image(jpg_path: Path, index: int | None, destination: Path | None) -
     marker = detect_piece_by_marker(warped)
     if marker.piece is not None:
         piece = marker.piece
-        warped = erase_marker(warped, marker.region)
     else:
         piece = piece_from_filename(jpg_path.name)
 
@@ -612,6 +594,7 @@ def process_image(jpg_path: Path, index: int | None, destination: Path | None) -
 
     resized = cv2.resize(warped, target_size, interpolation=cv2.INTER_AREA)
     transparent = remove_white_background(resized)
+    transparent = erase_marker(transparent, marker.region)
 
     if index is None:
         output_path = next_available_output_path(jpg_path.parent, piece)
