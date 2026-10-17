@@ -550,7 +550,10 @@ def run_batch(config_path: Path, folder_override: str | None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
-    jpg_paths = sorted(folder.glob("*.jpg")) + sorted(folder.glob("*.JPG"))
+    jpg_paths = sorted(
+        p for p in folder.iterdir()
+        if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg")
+    )
     processed = 0
     skipped_failed = 0
     for jpg_path in jpg_paths:

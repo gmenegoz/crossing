@@ -7,7 +7,7 @@ REM .bat). An optional command-line argument overrides FOLDER; INDEX and
 REM DESTINATION always come from config.txt regardless.
 setlocal
 
-set "SCRIPT_DIR=%~dp0\script"
+set "SCRIPT_DIR=%~dp0\script\"
 
 if exist "%SCRIPT_DIR%.venv\Scripts\python.exe" (
     set "PYTHON=%SCRIPT_DIR%.venv\Scripts\python.exe"
