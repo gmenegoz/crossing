@@ -19,35 +19,28 @@ TARGET_SIZE = {
 DEFAULT_TARGET = (367, 483)
 ASPECT_TOLERANCE = 0.05
 
-# Piece markers are a small saturated square in one corner of the white
-# rectangle. Hues are spaced 60 degrees apart around the wheel (OpenCV's
-# 0-179 hue range) to stay distinguishable under lighting variation.
-PIECE_HUES = {
-    "head": 5,
-    "body": 110,
-    "legback": 75,
-    "legfront": 30,
-    "tail": 15,
-    "wing": 150,
+PIECE_SYNONYMS = {
+    "testa": "head",
+    "corpo": "body",
+    "coda": "tail",
+    "ali": "wing",
+    "ala": "wing",
+    "zampea": "legfront",
+    "gambea": "legfront",
+    "zamped": "legback",
+    "gambed": "legback"
 }
-MARKER_HUE_TOLERANCE = 10  # max distance from a palette hue to accept a match
-MARKER_SATURATION_THRESHOLD = 80
-MARKER_MIN_PIXELS = 150  # below this, treat as noise rather than a real marker
-MARKER_CORNER_FRACTION = 0.15  # fraction of width/height sampled at each corner
-
 
 def piece_from_filename(filename: str) -> str | None:
     stem = Path(filename).stem.lower()
     for piece in TARGET_SIZE:
         if piece in stem:
             return piece
+    for synonym in PIECE_SYNONYMS:
+        if synonym in stem:
+            return PIECE_SYNONYMS[synonym]
     return None
 
-
-def _hue_distance(a: float, b: float) -> float:
-    """Circular distance between two hues on OpenCV's 0-179 scale."""
-    d = abs(a - b) % 180
-    return min(d, 180 - d)
 
 
 def find_marker_corner(warped: np.ndarray) -> tuple[str, int, int, int, int] | None:
@@ -78,99 +71,7 @@ def find_marker_corner(warped: np.ndarray) -> tuple[str, int, int, int, int] | N
     if best is None:
         return None
     name, _count, hue, (x, y, w, h) = best
-    return name, hue, x, y, w, h
-
-
-AMBIGUITY_MARGIN = 3  # if the two nearest palette colors are this close together, treat as a tie
-
-
-def _ranked_piece_hues(hue: float) -> list[tuple[str, float]]:
-    """Palette pieces ranked nearest-first, each with its circular distance
-    from the measured hue."""
-    return sorted(PIECE_HUES.items(), key=lambda item: _hue_distance(hue, item[1]))
-
-
-def piece_from_marker_hue(hue: float) -> str | None:
-    """Nearest palette color within tolerance, unless the runner-up is
-    nearly as close (within AMBIGUITY_MARGIN) — a real near-exact tie, e.g.
-    a hue sitting almost equidistant between two colors, which shouldn't be
-    resolved to whichever happens to round closer."""
-    ranked = _ranked_piece_hues(hue)
-    (nearest_piece, nearest_hue), (_runner_up_piece, runner_up_hue) = ranked[0], ranked[1]
-    nearest_distance = _hue_distance(hue, nearest_hue)
-    runner_up_distance = _hue_distance(hue, runner_up_hue)
-
-    if nearest_distance > MARKER_HUE_TOLERANCE:
-        return None
-    if runner_up_distance - nearest_distance < AMBIGUITY_MARGIN:
-        return None
-    return nearest_piece
-
-
-class MarkerDetectionResult:
-    """Outcome of looking for a piece marker: either a confident match, or
-    enough diagnostic detail (measured hue, nearest palette color) to explain
-    why one wasn't found."""
-
-    def __init__(
-        self,
-        piece: str | None,
-        region: tuple[int, int, int, int] | None = None,
-        corner_name: str | None = None,
-        hue: float | None = None,
-        nearest_piece: str | None = None,
-        nearest_distance: float | None = None,
-        runner_up_piece: str | None = None,
-        runner_up_distance: float | None = None,
-    ):
-        self.piece = piece
-        self.region = region
-        self.corner_name = corner_name
-        self.hue = hue
-        self.nearest_piece = nearest_piece
-        self.nearest_distance = nearest_distance
-        self.runner_up_piece = runner_up_piece
-        self.runner_up_distance = runner_up_distance
-
-    def describe_failure(self) -> str:
-        if self.hue is None:
-            return "no saturated marker square found in any corner"
-        if self.nearest_distance > MARKER_HUE_TOLERANCE:
-            return (
-                f"marker found (hue={self.hue:.0f}) but closest palette color is "
-                f"'{self.nearest_piece}' (hue={PIECE_HUES[self.nearest_piece]}, "
-                f"distance={self.nearest_distance:.0f}, tolerance={MARKER_HUE_TOLERANCE})"
-            )
-        return (
-            f"marker found (hue={self.hue:.0f}) but ambiguous between "
-            f"'{self.nearest_piece}' (distance={self.nearest_distance:.0f}) and "
-            f"'{self.runner_up_piece}' (distance={self.runner_up_distance:.0f}), "
-            f"within {AMBIGUITY_MARGIN} of each other"
-        )
-
-
-def detect_piece_by_marker(warped: np.ndarray) -> MarkerDetectionResult:
-    """Look for a confident piece marker in any corner of the rectangle."""
-    found = find_marker_corner(warped)
-    if found is None:
-        return MarkerDetectionResult(piece=None)
-    corner_name, hue, x, y, w, h = found
-    piece = piece_from_marker_hue(hue)
-    ranked = _ranked_piece_hues(hue)
-    nearest_piece, nearest_hue = ranked[0]
-    runner_up_piece, runner_up_hue = ranked[1]
-    if piece is None:
-        return MarkerDetectionResult(
-            piece=None,
-            corner_name=corner_name,
-            hue=hue,
-            nearest_piece=nearest_piece,
-            nearest_distance=_hue_distance(hue, nearest_hue),
-            runner_up_piece=runner_up_piece,
-            runner_up_distance=_hue_distance(hue, runner_up_hue),
-        )
-    return MarkerDetectionResult(piece=piece, region=(x, y, w, h), corner_name=corner_name, hue=hue)
-
+    return MarkerDetectionResult(region=(x, y, w, h), corner_name=name)
 
 def erase_marker(warped: np.ndarray, region: tuple[int, int, int, int]) -> np.ndarray:
     height, width = warped.shape[:2]
@@ -255,7 +156,9 @@ def is_framed_by_black_border(gray: np.ndarray, hull: np.ndarray) -> bool:
 
 
 MARKER_RESCUE_DILATION = 15  # px: how far from the white region a saturated patch can still be rescued
-
+MARKER_SATURATION_THRESHOLD = 80
+MARKER_CORNER_FRACTION = 0.15  # fraction of width/height sampled at each corner
+MARKER_MIN_PIXELS = 150  # below this, treat as noise rather than a real marker
 
 def _white_region_mask(gray: np.ndarray, image: np.ndarray) -> np.ndarray:
     """Otsu-threshold mask of the white rectangle, patched so a saturated
@@ -539,6 +442,27 @@ class ConfigError(Exception):
     pass
 
 
+
+class MarkerDetectionResult:
+    """Outcome of looking for a piece marker: either a confident match, or
+    enough diagnostic detail (measured hue, nearest palette color) to explain
+    why one wasn't found."""
+
+    def __init__(
+        self,
+        region: tuple[int, int, int, int] | None = None,
+        corner_name: str | None = None,       
+    ):
+        self.region = region
+        self.corner_name = corner_name
+        
+
+    def describe_failure(self) -> str:
+        if self.hue is None:
+            return "no saturated marker square found in any corner"
+        
+
+
 def resolve_run_config(config_path: Path, folder_override: str | None) -> tuple[Path, int, Path | None]:
     """Resolve FOLDER/INDEX/DESTINATION for a batch run. FOLDER can come from
     a CLI-provided override (folder_override) or config.txt; INDEX and
@@ -577,15 +501,19 @@ def process_image(jpg_path: Path, index: int | None, destination: Path | None) -
     corners = find_frame_corners(image)
     warped = warp_to_rectangle(image, corners)
 
-    marker = detect_piece_by_marker(warped)
-    if marker.piece is not None:
-        piece = marker.piece
-    else:
-        piece = piece_from_filename(jpg_path.name)
+    piece = piece_from_filename(jpg_path.name)
+
+    marker =find_marker_corner(warped)
+        
+    #marker = detect_piece_by_marker(warped)
+    #if marker.piece is not None:
+    #    piece = marker.piece
+    #else:
+    #    piece = piece_from_filename(jpg_path.name)
 
     if piece is None:
-        filename_note = "filename has no recognized piece substring either"
-        raise PieceNotIdentifiedError(f"{marker.describe_failure()}; {filename_note}")
+        filename_note = "filename has no recognized piece substring"
+        raise PieceNotIdentifiedError(f"{jpg_path.name}; {filename_note}")
 
     target_size = TARGET_SIZE[piece]
     warped = correct_rotation(warped, target_size, marker.corner_name)
@@ -666,3 +594,158 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+'''
+Temporarily disabled code. Used to work with colored markers to identify pieces
+
+
+# Piece markers are a small saturated square in one corner of the white
+# rectangle. Hues are spaced 60 degrees apart around the wheel (OpenCV's
+# 0-179 hue range) to stay distinguishable under lighting variation.
+PIECE_HUES = {
+    "head": 5,
+    "body": 110,
+    "legback": 75,
+    "legfront": 30,
+    "tail": 15,
+    "wing": 150,
+}
+MARKER_HUE_TOLERANCE = 10  # max distance from a palette hue to accept a match
+MARKER_SATURATION_THRESHOLD = 80
+MARKER_MIN_PIXELS = 150  # below this, treat as noise rather than a real marker
+MARKER_CORNER_FRACTION = 0.15  # fraction of width/height sampled at each corner
+
+def _hue_distance(a: float, b: float) -> float:
+    """Circular distance between two hues on OpenCV's 0-179 scale."""
+    d = abs(a - b) % 180
+    return min(d, 180 - d)
+
+
+def find_marker_corner(warped: np.ndarray) -> tuple[str, int, int, int, int] | None:
+    """Look for a saturated marker square in each corner of the (still
+    unrotated) warped rectangle. Returns (corner_name, x, y, w, h) for the
+    corner region with the largest saturated blob, or None if no corner has
+    enough saturated pixels to be considered a real marker."""
+    height, width = warped.shape[:2]
+    ch = int(height * MARKER_CORNER_FRACTION)
+    cw = int(width * MARKER_CORNER_FRACTION)
+    regions = {
+        "TL": (0, 0, cw, ch),
+        "TR": (width - cw, 0, cw, ch),
+        "BL": (0, height - ch, cw, ch),
+        "BR": (width - cw, height - ch, cw, ch),
+    }
+
+    best = None
+    for name, (x, y, w, h) in regions.items():
+        region = warped[y : y + h, x : x + w]
+        hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+        saturated = hsv[:, :, 1] > MARKER_SATURATION_THRESHOLD
+        count = int(saturated.sum())
+        if count >= MARKER_MIN_PIXELS and (best is None or count > best[1]):
+            hue = float(np.median(hsv[:, :, 0][saturated]))
+            best = (name, count, hue, (x, y, w, h))
+
+    if best is None:
+        return None
+    name, _count, hue, (x, y, w, h) = best
+    return name, hue, x, y, w, h
+
+
+AMBIGUITY_MARGIN = 3  # if the two nearest palette colors are this close together, treat as a tie
+
+
+def _ranked_piece_hues(hue: float) -> list[tuple[str, float]]:
+    """Palette pieces ranked nearest-first, each with its circular distance
+    from the measured hue."""
+    return sorted(PIECE_HUES.items(), key=lambda item: _hue_distance(hue, item[1]))
+
+
+def piece_from_marker_hue(hue: float) -> str | None:
+    """Nearest palette color within tolerance, unless the runner-up is
+    nearly as close (within AMBIGUITY_MARGIN) — a real near-exact tie, e.g.
+    a hue sitting almost equidistant between two colors, which shouldn't be
+    resolved to whichever happens to round closer."""
+    ranked = _ranked_piece_hues(hue)
+    (nearest_piece, nearest_hue), (_runner_up_piece, runner_up_hue) = ranked[0], ranked[1]
+    nearest_distance = _hue_distance(hue, nearest_hue)
+    runner_up_distance = _hue_distance(hue, runner_up_hue)
+
+    if nearest_distance > MARKER_HUE_TOLERANCE:
+        return None
+    if runner_up_distance - nearest_distance < AMBIGUITY_MARGIN:
+        return None
+    return nearest_piece
+
+
+class MarkerDetectionResult:
+    """Outcome of looking for a piece marker: either a confident match, or
+    enough diagnostic detail (measured hue, nearest palette color) to explain
+    why one wasn't found."""
+
+    def __init__(
+        self,
+        piece: str | None,
+        region: tuple[int, int, int, int] | None = None,
+        corner_name: str | None = None,
+        hue: float | None = None,
+        nearest_piece: str | None = None,
+        nearest_distance: float | None = None,
+        runner_up_piece: str | None = None,
+        runner_up_distance: float | None = None,
+    ):
+        self.piece = piece
+        self.region = region
+        self.corner_name = corner_name
+        self.hue = hue
+        self.nearest_piece = nearest_piece
+        self.nearest_distance = nearest_distance
+        self.runner_up_piece = runner_up_piece
+        self.runner_up_distance = runner_up_distance
+
+    def describe_failure(self) -> str:
+        if self.hue is None:
+            return "no saturated marker square found in any corner"
+        if self.nearest_distance > MARKER_HUE_TOLERANCE:
+            return (
+                f"marker found (hue={self.hue:.0f}) but closest palette color is "
+                f"'{self.nearest_piece}' (hue={PIECE_HUES[self.nearest_piece]}, "
+                f"distance={self.nearest_distance:.0f}, tolerance={MARKER_HUE_TOLERANCE})"
+            )
+        return (
+            f"marker found (hue={self.hue:.0f}) but ambiguous between "
+            f"'{self.nearest_piece}' (distance={self.nearest_distance:.0f}) and "
+            f"'{self.runner_up_piece}' (distance={self.runner_up_distance:.0f}), "
+            f"within {AMBIGUITY_MARGIN} of each other"
+        )
+
+
+def detect_piece_by_marker(warped: np.ndarray) -> MarkerDetectionResult:
+    """Look for a confident piece marker in any corner of the rectangle."""
+    found = find_marker_corner(warped)
+    if found is None:
+        return MarkerDetectionResult(piece=None)
+    corner_name, hue, x, y, w, h = found
+    piece = piece_from_marker_hue(hue)
+    ranked = _ranked_piece_hues(hue)
+    nearest_piece, nearest_hue = ranked[0]
+    runner_up_piece, runner_up_hue = ranked[1]
+    if piece is None:
+        return MarkerDetectionResult(
+            piece=None,
+            corner_name=corner_name,
+            hue=hue,
+            nearest_piece=nearest_piece,
+            nearest_distance=_hue_distance(hue, nearest_hue),
+            runner_up_piece=runner_up_piece,
+            runner_up_distance=_hue_distance(hue, runner_up_hue),
+        )
+    return MarkerDetectionResult(piece=piece, region=(x, y, w, h), corner_name=corner_name, hue=hue)
+
+
+def erase_marker(warped: np.ndarray, region: tuple[int, int, int, int]) -> np.ndarray:
+    height, width = warped.shape[:2]
+    erased = warped.copy()
+    erased[height - 50 : height, width - 50: width] = np.array([0, 0, 0,0])
+    return erased
+'''

@@ -9,5 +9,5 @@ tests/integration/__pycache__/
 tests/unit/__pycache__/
 .coverage
 webcam/testPics/
-webcam/.venv/
+webcam/script/.venv/
 webcam/__pycache__/

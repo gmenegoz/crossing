@@ -7,7 +7,7 @@
 # DESTINATION always come from config.txt regardless.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/script"
 
 if [[ -x "$SCRIPT_DIR/.venv/bin/python3" ]]; then
     PYTHON="$SCRIPT_DIR/.venv/bin/python3"
