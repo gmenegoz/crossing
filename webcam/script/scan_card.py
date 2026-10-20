@@ -71,6 +71,7 @@ def find_marker_corner(warped: np.ndarray) -> tuple[str, int, int, int, int] | N
     if best is None:
         return None
     name, _count, hue, (x, y, w, h) = best
+    print(f"Marker found at {name} corner")
     return MarkerDetectionResult(region=(x, y, w, h), corner_name=name)
 
 def erase_marker(warped: np.ndarray, region: tuple[int, int, int, int]) -> np.ndarray:
@@ -464,9 +465,9 @@ class MarkerDetectionResult:
 
 
 def resolve_run_config(config_path: Path, folder_override: str | None) -> tuple[Path, int, Path | None]:
-    """Resolve FOLDER/INDEX/DESTINATION for a batch run. FOLDER can come from
-    a CLI-provided override (folder_override) or config.txt; INDEX and
-    DESTINATION always come from config.txt regardless of how FOLDER was
+    """Resolve FOLDER/INDEX/DESTINATION/MARKER for a batch run. FOLDER can come from
+    a CLI-provided override (folder_override) or config.txt; INDEX,
+    DESTINATION and MARKER always come from config.txt regardless of how FOLDER was
     chosen, per the agreed behavior for combining CLI and config-file usage."""
     if not config_path.is_file():
         raise ConfigError(f"config file not found: {config_path}")
@@ -490,10 +491,16 @@ def resolve_run_config(config_path: Path, folder_override: str | None) -> tuple[
     destination_str = config.get("DESTINATION")
     destination = Path(destination_str) if destination_str else None
 
-    return folder, index, destination
+    marker_str = config.get("MARKER")
+    if not marker_str:
+        use_marker = False
+    else:
+        use_marker = True if marker_str.lower() in ["true", "vero", "1"] else False
+
+    return folder, index, destination, use_marker
 
 
-def process_image(jpg_path: Path, index: int | None, destination: Path | None) -> Path:
+def process_image(jpg_path: Path, index: int | None, destination: Path | None, use_marker: bool) -> Path:
     image = cv2.imread(str(jpg_path))
     if image is None:
         raise FrameNotFoundError(f"could not read image: {jpg_path}")
@@ -502,8 +509,8 @@ def process_image(jpg_path: Path, index: int | None, destination: Path | None) -
     warped = warp_to_rectangle(image, corners)
 
     piece = piece_from_filename(jpg_path.name)
-
-    marker =find_marker_corner(warped)
+    if use_marker:
+        marker = find_marker_corner(warped)
         
     #marker = detect_piece_by_marker(warped)
     #if marker.piece is not None:
@@ -516,13 +523,15 @@ def process_image(jpg_path: Path, index: int | None, destination: Path | None) -
         raise PieceNotIdentifiedError(f"{jpg_path.name}; {filename_note}")
 
     target_size = TARGET_SIZE[piece]
-    warped = correct_rotation(warped, target_size, marker.corner_name)
+    if use_marker:
+        warped = correct_rotation(warped, target_size, marker.corner_name)
     warped = trim_border(warped)
     check_aspect_ratio(warped, jpg_path.name, target_size)
 
     resized = cv2.resize(warped, target_size, interpolation=cv2.INTER_AREA)
     transparent = remove_white_background(resized)
-    transparent = erase_marker(transparent, marker.region)
+    if use_marker:
+        transparent = erase_marker(transparent, marker.region)
 
     if index is None:
         output_path = next_available_output_path(jpg_path.parent, piece)
@@ -545,7 +554,7 @@ def run_batch(config_path: Path, folder_override: str | None) -> int:
     FOLDER/INDEX/DESTINATION rules live in one place rather than being
     duplicated in bash and batch syntax."""
     try:
-        folder, index, destination = resolve_run_config(config_path, folder_override)
+        folder, index, destination, use_marker = resolve_run_config(config_path, folder_override)
     except ConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
@@ -558,7 +567,7 @@ def run_batch(config_path: Path, folder_override: str | None) -> int:
     skipped_failed = 0
     for jpg_path in jpg_paths:
         try:
-            output_path = process_image(jpg_path, index, destination)
+            output_path = process_image(jpg_path, index, destination, use_marker)
         except (FrameNotFoundError, PieceNotIdentifiedError) as exc:
             print(f"[ERR] {jpg_path.name}: {exc}, skipping", file=sys.stderr)
             skipped_failed += 1
