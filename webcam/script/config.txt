@@ -1,4 +1,4 @@
 FOLDER=C:\path\to\folder
-INDEX=1
+INDEX=3
 DESTINATION=/home/mene/wow
-MARKER=TRUE
+MARKER=FALSE

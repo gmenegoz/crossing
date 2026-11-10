@@ -11,3 +11,4 @@ tests/unit/__pycache__/
 webcam/testPics/
 webcam/script/.venv/
 webcam/__pycache__/
+webcam/script/__pycache__/

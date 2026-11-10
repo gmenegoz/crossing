@@ -296,25 +296,87 @@ def warp_to_rectangle(image: np.ndarray, corners: np.ndarray) -> np.ndarray:
     return cv2.warpPerspective(image, matrix, (warped_width, warped_height))
 
 
-TRIM_FRACTION = 0.045  # shave this fraction off each side to drop stray black-frame slivers
+# ---- TRIMMING TUNING ------------------------------------------------------
+# (up) = raise the value to trim MORE; (down) = lower the value to trim MORE.
+# Previous, gentler values are in brackets.
+TRIM_MIN_FRACTION = 0.02  # (up) guaranteed minimum cut per side, even if no frame is found [0.01]
+TRIM_MAX_FRACTION = 0.09  # (up) ceiling on the cut per side = most artwork you can lose [0.09]
+TRIM_SAFETY_PX = 10  # (up) extra px cut past the last frame line, covers the faded rim [3]
+TRIM_DARK_VALUE = 175  # (up) HSV value below which a pixel is frame; keep under ink brightness (~190) AND under tinted-paper fill (~175, 175 erased it in testPics/giorgia) [150]
+TRIM_LINE_FRACTION = 0.05  # (down) share of a row/column that must be frame for it to count [0.10]
+TRIM_CLEAN_DILATION = 4  # (up) px: grow edge-touching dark blobs to also cover their rim [3]
+TRIM_CLEAN_BAND_FRACTION = 0.04  # (up) outer band (fraction of size) where blobs are whitened [0.03]
+# Also relevant: CORNER_EXPAND_FRACTION above (down = tighter detected rectangle,
+# so less frame enters the warp; up = more frame for the trim to remove).
+# ---------------------------------------------------------------------------
+
+
+def _side_trim(frame_mask: np.ndarray, max_depth: int, margin: int) -> int:
+    """Depth (in px) of the innermost row of frame_mask, counted from its
+    first row, that still contains frame pixels. frame_mask is oriented so
+    row 0 is the image edge and rows increase toward the centre."""
+    # Ignore the span covered by the perpendicular sides' own frame bands,
+    # otherwise their dark columns count toward every row of this side.
+    margin = margin if frame_mask.shape[1] > 4 * margin else 0
+    span = frame_mask[:max_depth, margin : frame_mask.shape[1] - margin]
+    needed = max(2, int(span.shape[1] * TRIM_LINE_FRACTION))
+    counts = span.sum(axis=1)
+    hits = np.nonzero(counts >= needed)[0]
+    return int(hits[-1]) + 1 if len(hits) else 0
 
 
 def trim_border(warped: np.ndarray) -> np.ndarray:
-    """Detected corners can include a sliver of the black frame at the edges
-    (perspective/threshold detection isn't pixel-perfect, and expand_corners
-    deliberately over-shoots outward to avoid clipping artwork); shave a
-    margin off each side before it's treated as foreground by background
-    removal. Sized to match expand_corners' overshoot (~6%) rather than just
-    covering detection jitter: measured against real photos, the black
-    canvas/backdrop takes 2-6% of the image to fade to clean white paper, so
-    trimming less than that leaves a visible dark sliver around the artwork.
-    A user who draws too close to this margin may lose a bit of artwork to
-    the trim — acceptable, since removing the frame takes priority and they
-    can redraw with more clearance."""
+    """Shave the black frame off each side of the warped rectangle.
+
+    Perspective, lens bowing and the shadow gradient on the page edge make
+    the frame/paper boundary sit at a different depth on each side (and wavy
+    along a side), so a single fixed fraction either leaves a sliver on one
+    side or eats artwork on another. Instead, scan inward from each edge and
+    cut just past the innermost line that still contains a meaningful share
+    of dark, unsaturated pixels. The saturation test keeps coloured ink
+    (even dark blue/green) from counting as frame, so artwork touching the
+    border isn't mistaken for it. Each side is clamped to
+    [TRIM_MIN_FRACTION, TRIM_MAX_FRACTION] of its dimension."""
     height, width = warped.shape[:2]
-    trim_x = max(1, int(round(width * TRIM_FRACTION)))
-    trim_y = max(1, int(round(height * TRIM_FRACTION)))
-    return warped[trim_y : height - trim_y, trim_x : width - trim_x]
+    frame = warped.max(axis=2) < TRIM_DARK_VALUE
+
+    def clamp(depth: int, dimension: int) -> int:
+        lo = max(1, int(round(dimension * TRIM_MIN_FRACTION)))
+        hi = int(round(dimension * TRIM_MAX_FRACTION))
+        return min(hi, max(lo, depth + TRIM_SAFETY_PX if depth else lo))
+
+    max_y = int(height * TRIM_MAX_FRACTION)
+    max_x = int(width * TRIM_MAX_FRACTION)
+    # max_depth for a side's margin is the band of the *perpendicular* sides.
+    top = clamp(_side_trim(frame, max_y, max_x), height)
+    bottom = clamp(_side_trim(frame[::-1], max_y, max_x), height)
+    left = clamp(_side_trim(frame.T, max_x, max_y), width)
+    right = clamp(_side_trim(frame.T[::-1], max_x, max_y), width)
+    trimmed = warped[top : height - bottom, left : width - right].copy()
+    return _whiten_residual_frame(trimmed)
+
+
+def _whiten_residual_frame(image: np.ndarray) -> np.ndarray:
+    """A bowed edge can leave frame slivers shorter than TRIM_LINE_FRACTION
+    of a side, which the straight cut above doesn't remove. Paint dark blobs
+    that touch the image border white (so background removal drops them);
+    interior dark ink that doesn't reach the border is left alone."""
+    dark = (image.max(axis=2) < TRIM_DARK_VALUE).astype(np.uint8)
+    count, labels = cv2.connectedComponents(dark, connectivity=8)
+    edge_labels = set(np.unique(np.concatenate(
+        [labels[0], labels[-1], labels[:, 0], labels[:, -1]]))) - {0}
+    if not edge_labels:
+        return image
+    blobs = np.isin(labels, list(edge_labels)).astype(np.uint8)
+    k = TRIM_CLEAN_DILATION * 2 + 1
+    blobs = cv2.dilate(blobs, np.ones((k, k), np.uint8))
+    band_y = max(1, int(image.shape[0] * TRIM_CLEAN_BAND_FRACTION))
+    band_x = max(1, int(image.shape[1] * TRIM_CLEAN_BAND_FRACTION))
+    in_band = np.zeros(blobs.shape, bool)
+    in_band[:band_y] = in_band[-band_y:] = True
+    in_band[:, :band_x] = in_band[:, -band_x:] = True
+    image[(blobs > 0) & in_band] = 255
+    return image
 
 
 def check_aspect_ratio(warped: np.ndarray, filename: str, target_size: tuple[int, int]) -> None:
@@ -523,7 +585,7 @@ def process_image(jpg_path: Path, index: int | None, destination: Path | None, u
         raise PieceNotIdentifiedError(f"{jpg_path.name}; {filename_note}")
 
     target_size = TARGET_SIZE[piece]
-    if use_marker:
+    if use_marker and marker:
         warped = correct_rotation(warped, target_size, marker.corner_name)
     warped = trim_border(warped)
     check_aspect_ratio(warped, jpg_path.name, target_size)
@@ -595,7 +657,7 @@ def main() -> int:
     jpg_path = Path(sys.argv[1])
     index = int(sys.argv[2]) if len(sys.argv) == 3 else None
     try:
-        output_path = process_image(jpg_path, index, destination=None)
+        output_path = process_image(jpg_path, index, destination=None, use_marker=False)
     except (FrameNotFoundError, PieceNotIdentifiedError) as exc:
         print(f"[ERR] {jpg_path.name}: {exc}, skipping", file=sys.stderr)
         return 1
