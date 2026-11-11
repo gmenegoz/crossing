@@ -10,17 +10,17 @@ from app.models import LAYERS, Pieces
 
 ASSETS_DIR = Path(__file__).parent.parent / "assets"
 
-LAYER_ORDER = ["legback", "body", "legfront", "head", "tail", "wing"]
+LAYER_ORDER = ["tail", "legback", "body", "legfront", "head", "wing"]
 LAYER_POSITION = {
     "head":         (0, 0),
     "body":         (183, 51),
     "wing":         (345, 0),
     "legfront":     (0, 181),
     "legfront_l":   (0, 181),
-    "legfront_r":   (380, 181),
+    "legfront_r":   (0, 181), # Sarebbe 380 ma c'è l'offset dato da split-legs
     "legback":      (0, 181),
     "legback_l":    (0, 181),
-    "legback_r":    (380, 181),
+    "legback_r":    (0, 181),
     "tail":         (519, 0),
 }
 
@@ -43,40 +43,49 @@ def load_piece( path: Path) -> Image.Image:
     img = Image.open(path).convert("RGBA")
     return img
 
-def split_legs(img: Image.Image) -> Image.Image:
+def parse_projection( img: Image.Image) -> list[int]:
     w, h = img.size
+    pixel_map = img.getchannel('A').load()
     xProjection = img.getchannel('A').getprojection()[0]
+
+    for column in range(w):
+        pixelCount = 0
+        if xProjection[column] == 1:
+            for row in range(h):
+                if pixel_map[column, row] != 0:
+                    pixelCount = pixelCount + 1
+            if pixelCount < 15:
+                print (column, pixelCount)
+                xProjection[column] = 0
+
     grouped = [(k, len(list(g))) for k, g in groupby(xProjection)]
-    print(grouped)
+    return grouped
+
+
+def split_legs(img: Image.Image) -> list:
+    w, h = img.size
+
+    grouped = parse_projection(img)
     if len(grouped) == 3:
         legs = [img] 
     else:
         if grouped[0][0] == 0:
+            left_margin = grouped[0][1]
             split_x = grouped[0][1]+grouped[1][1] + 1
         else:
+            left_margin = 0
             split_x = grouped[0][1]+ 1
-        print (split_x)
-        leftLeg = img.crop((0, 0, split_x, h))
+        leftLeg = img.crop((left_margin, 0, split_x, h))
         if grouped[-1][0] == 0:
+            right_margin = grouped[-1][1] 
             split_x = grouped[-1][1]+grouped[-2][1] + 1
         else:
+            right_margin = 0
             split_x = grouped[-1][1]+ 1
-        print (split_x)
-        rightLeg = img.crop((w - split_x, 0, w, h))
-        legs = [leftLeg, rightLeg]
+        rightLeg = img.crop((w - split_x, 0, w - right_margin, h))
+        legs = [(leftLeg, left_margin), (rightLeg, w - right_margin - grouped[-1][1])]
         
     return legs
-
-def _get_offset(img: Image.Image) -> (int, int):
-    bbox = img.getbbox()
-    return (bbox[0], bbox[1]) if bbox else (0,0)
- 
-def _process_piece(layer: str, img: Image.Image) -> Image.Image:
-    bbox = img.getbbox()
-    if bbox:
-        img = img.crop(bbox)
-    return img
-
 
 def _img_to_b64(img: Image.Image) -> str:
     buf = io.BytesIO()
@@ -132,13 +141,13 @@ def random_pieces(extra_files: dict[str, list[str]] | None = None) -> Pieces:
     return Pieces(**parts)
 
 
-def add_part(img: Image.Image, layer: str, path: str, parts: list) -> list:
+def add_part(img: Image.Image, layer: str, path: str, parts: list, additional_offset: int = 0) -> list:
     bbox = img.getbbox()
     if bbox:
         img = img.crop(bbox)
     w, h = img.size
     b64 = _img_to_b64(img)
-    offset = (bbox[0], bbox[1]) if bbox else (0,0)
+    offset = (bbox[0]+ additional_offset, bbox[1]) if bbox else (0,0)
     x, y =  tuple(map(sum, zip(LAYER_POSITION[layer], offset)))
     parts.append({"layer": layer, "x": x, "y": y, "w": w, "h": h, "b64": b64})
     print(f"  {layer:14s} → {path}  ({w}×{h}) at ({x},{y})")
@@ -158,8 +167,8 @@ def compose_svg(pieces: Pieces, extra_cache: dict[str, dict] | None = None) -> s
                 if len(legs) == 1:
                     parts = add_part(legs[0], layer, key, parts)
                 else:
-                    parts = add_part(legs[0], layer+"_l", key, parts)
-                    parts = add_part(legs[1], layer+"_r", key, parts)
+                    parts = add_part(legs[0][0], layer+"_l", key, parts, legs[0][1])
+                    parts = add_part(legs[1][0], layer+"_r", key, parts, legs[1][1])
             else:
                 parts = add_part(entry, layer, key, parts)
 
@@ -169,9 +178,9 @@ def compose_svg(pieces: Pieces, extra_cache: dict[str, dict] | None = None) -> s
     max_y = max(p["y"] + p["h"] for p in parts)
     vw, vh = max_x - min_x, max_y - min_y
 
-# TODO add id to each part
+
     images_xml = "\n".join(
-        f'    <image id="{p["layer"]}" x="{p["x"] + 120}" y="{p["y"] + 90}" width="{p["w"]}" height="{p["h"]}" '
+        f'    <image id="{p["layer"]}" x="{p["x"] + 240}" y="{p["y"] + 150}" width="{p["w"]}" height="{p["h"]}" '
         f'xlink:href="data:image/png;base64,{p["b64"]}" />'
         for p in parts
     )
@@ -180,7 +189,7 @@ def compose_svg(pieces: Pieces, extra_cache: dict[str, dict] | None = None) -> s
         f'xmlns:xlink="http://www.w3.org/1999/xlink" '
         f'viewBox="{min_x} {min_y} {vw} {vh}" '
         f'width="{vw}" height="{vh}">\n'
-        f'  <g id="chimera" transform="scale(0.7)">\n'
+        f'  <g id="chimera" transform="scale(0.5)">\n'
         f"{images_xml}\n"
         f'  </g>\n'
         f"</svg>\n"

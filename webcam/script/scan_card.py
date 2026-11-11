@@ -229,7 +229,7 @@ def find_frame_corners(image: np.ndarray) -> np.ndarray:
     raise FrameNotFoundError("no quadrilateral frame contour found")
 
 
-CORNER_EXPAND_FRACTION = 0.06  # push detected corners outward by this fraction, away from center
+CORNER_EXPAND_FRACTION = 0.12  # push detected corners outward by this fraction, away from center
 
 
 def expand_corners(corners: np.ndarray) -> np.ndarray:
@@ -300,10 +300,10 @@ def warp_to_rectangle(image: np.ndarray, corners: np.ndarray) -> np.ndarray:
 # (up) = raise the value to trim MORE; (down) = lower the value to trim MORE.
 # Previous, gentler values are in brackets.
 TRIM_MIN_FRACTION = 0.02  # (up) guaranteed minimum cut per side, even if no frame is found [0.01]
-TRIM_MAX_FRACTION = 0.09  # (up) ceiling on the cut per side = most artwork you can lose [0.09]
+TRIM_MAX_FRACTION = 0.1  # (up) ceiling on the cut per side = most artwork you can lose [0.09]
 TRIM_SAFETY_PX = 10  # (up) extra px cut past the last frame line, covers the faded rim [3]
-TRIM_DARK_VALUE = 175  # (up) HSV value below which a pixel is frame; keep under ink brightness (~190) AND under tinted-paper fill (~175, 175 erased it in testPics/giorgia) [150]
-TRIM_LINE_FRACTION = 0.05  # (down) share of a row/column that must be frame for it to count [0.10]
+TRIM_DARK_VALUE = 150  # (up) HSV value below which a pixel is frame; keep under ink brightness (~190) AND under tinted-paper fill (~175, 175 erased it in testPics/giorgia) [150]
+TRIM_LINE_FRACTION = 0.02  # (down) share of a row/column that must be frame for it to count [0.10]
 TRIM_CLEAN_DILATION = 4  # (up) px: grow edge-touching dark blobs to also cover their rim [3]
 TRIM_CLEAN_BAND_FRACTION = 0.04  # (up) outer band (fraction of size) where blobs are whitened [0.03]
 # Also relevant: CORNER_EXPAND_FRACTION above (down = tighter detected rectangle,
