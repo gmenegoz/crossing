@@ -498,8 +498,10 @@ function setLang(code) {
   applyTranslations();
 }
 
+const IMPORTED_PREFIX = "imported:";  // must match app/composer.py
+
 const state = {
-  chimeras: [],        // ChimeraListItem[]
+  chimeras: [],       // ChimeraListItem[]
   selected: null,      // full Chimera | null
   layerOptions: {},    // {layer: {default: [...], imported: [...], optional: bool}}
   modalMode: null,     // "create" | "edit"
@@ -641,23 +643,49 @@ function openModal(mode) {
 
   if (mode === "edit" && state.selected) {
     state.modalSel = { ...state.selected.pieces };
+    // Open on the Imported tab if the chimera uses imported pieces, so they're visible
+    if (Object.values(state.modalSel).some(v => v && v.startsWith(IMPORTED_PREFIX))) {
+      state.modalTab = "imported";
+    }
   } else {
     // Default: first available option per layer (default tab, falling back to imported)
     state.modalSel = {};
     for (const [layer, opts] of Object.entries(state.layerOptions)) {
-      state.modalSel[layer] = opts.default[0] ?? opts.imported[0] ?? null;
+      state.modalSel[layer] = opts.default[0]
+        ?? (opts.imported[0] ? IMPORTED_PREFIX + opts.imported[0] : null);
     }
   }
 
+  // Drop the previous session's columns so their scroll positions aren't carried over
+  document.getElementById("modal-columns").innerHTML = "";
   buildModalBody();
   document.getElementById("modal-preview-svg").innerHTML = "";
   fetchAndRenderPreview();
   document.getElementById("modal").showModal();
+  scrollSelectedIntoView();  // needs the dialog to be visible to measure layout
+}
+
+// Scroll each column so its selected piece is centered
+function scrollSelectedIntoView() {
+  document.querySelectorAll("#modal-columns .layer-strip").forEach(strip => {
+    const sel = strip.querySelector(".piece-option.selected");
+    if (!sel) { strip.scrollTop = 0; return; }
+    const offset = sel.getBoundingClientRect().top - strip.getBoundingClientRect().top;
+    strip.scrollTop += offset - (strip.clientHeight - sel.offsetHeight) / 2;
+  });
 }
 
 function buildModalBody() {
   const tabsEl = document.getElementById("modal-tabs");
   const columnsEl = document.getElementById("modal-columns");
+
+  // Remember scroll positions so the rebuild doesn't jump columns back to the top
+  const savedScroll = {};
+  columnsEl.querySelectorAll(".layer-strip").forEach(s => {
+    savedScroll[s.dataset.layer] = s.scrollTop;
+  });
+  const savedScrollLeft = columnsEl.scrollLeft;
+
   tabsEl.innerHTML = "";
   columnsEl.innerHTML = "";
 
@@ -686,6 +714,7 @@ function buildModalBody() {
 
     const strip = document.createElement("div");
     strip.className = "layer-strip";
+    strip.dataset.layer = layer;
 
     if (opts.optional) {
       const noneDiv = document.createElement("div");
@@ -702,8 +731,11 @@ function buildModalBody() {
 
     const files = opts[state.modalTab];
     for (const file of files) {
+      // Imported pieces are stored as "imported:<name>" so they never clash with
+      // a built-in piece of the same name
+      const value = state.modalTab === "imported" ? IMPORTED_PREFIX + file : file;
       const div = document.createElement("div");
-      div.className = "piece-option" + (state.modalSel[layer] === file ? " selected" : "");
+      div.className = "piece-option" + (state.modalSel[layer] === value ? " selected" : "");
       div.dataset.layer = layer;
       div.dataset.file  = file;
 
@@ -715,7 +747,7 @@ function buildModalBody() {
       div.appendChild(img);
 
       div.addEventListener("click", () => {
-        state.modalSel[layer] = file;
+        state.modalSel[layer] = value;
         buildModalBody();
         schedulePreview();
       });
@@ -726,6 +758,12 @@ function buildModalBody() {
     section.appendChild(strip);
     columnsEl.appendChild(section);
   }
+
+  // Restore scroll positions (must happen after the strips are in the DOM)
+  columnsEl.scrollLeft = savedScrollLeft;
+  columnsEl.querySelectorAll(".layer-strip").forEach(s => {
+    if (savedScroll[s.dataset.layer] != null) s.scrollTop = savedScroll[s.dataset.layer];
+  });
 }
 
 let previewDebounceTimer = null;

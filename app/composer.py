@@ -1,6 +1,7 @@
 import base64
 import io
 import random
+import heapq
 from pathlib import Path
 from itertools import groupby
 
@@ -55,7 +56,6 @@ def parse_projection( img: Image.Image) -> list[int]:
                 if pixel_map[column, row] != 0:
                     pixelCount = pixelCount + 1
             if pixelCount < 15:
-                print (column, pixelCount)
                 xProjection[column] = 0
 
     grouped = [(k, len(list(g))) for k, g in groupby(xProjection)]
@@ -66,25 +66,25 @@ def split_legs(img: Image.Image) -> list:
     w, h = img.size
 
     grouped = parse_projection(img)
-    if len(grouped) == 3:
-        legs = [img] 
+    if len(grouped) <= 3:
+        legs = [(img,0)]
     else:
-        if grouped[0][0] == 0:
-            left_margin = grouped[0][1]
-            split_x = grouped[0][1]+grouped[1][1] + 1
-        else:
-            left_margin = 0
-            split_x = grouped[0][1]+ 1
-        leftLeg = img.crop((left_margin, 0, split_x, h))
-        if grouped[-1][0] == 0:
-            right_margin = grouped[-1][1] 
-            split_x = grouped[-1][1]+grouped[-2][1] + 1
-        else:
-            right_margin = 0
-            split_x = grouped[-1][1]+ 1
-        rightLeg = img.crop((w - split_x, 0, w - right_margin, h))
-        legs = [(leftLeg, left_margin), (rightLeg, w - right_margin - grouped[-1][1])]
+        tentative_legs = heapq.nlargest(
+            2,
+            (i for i, (flag, _) in enumerate(grouped) if flag == 1),
+            key=lambda i: grouped[i][1],
+        )
+        left_leg_index = min(tentative_legs)
+        left_leg_left_margin = sum(v for _, v in grouped[:left_leg_index])
+        left_leg_right_margin = left_leg_left_margin + grouped[left_leg_index][1]
+        leftLeg = img.crop((left_leg_left_margin, 0, left_leg_right_margin, h))
+        right_leg_index = max(tentative_legs)
+        right_leg_left_margin = sum(v for _, v in grouped[:right_leg_index])
+        right_leg_right_margin = right_leg_left_margin + grouped[right_leg_index][1]
+        rightLeg = img.crop((right_leg_left_margin, 0, right_leg_right_margin, h))
         
+        legs = [(leftLeg, left_leg_left_margin), (rightLeg, right_leg_left_margin)]
+
     return legs
 
 def _img_to_b64(img: Image.Image) -> str:
@@ -108,6 +108,22 @@ _build_cache()
 
 def builtin_pngs(layer: str) -> list[str]:
     return sorted(p.name for p in (ASSETS_DIR / layer).glob("*.png"))
+
+
+# Pieces.<layer> values starting with this prefix refer to an imported piece;
+# plain names refer to built-in pieces. This keeps a built-in and an imported
+# file with the same name (e.g. body12.png) distinct.
+IMPORTED_PREFIX = "imported:"
+
+
+def lookup_piece(layer: str, filename: str, extra_cache: dict | None = None):
+    """Resolve a Pieces value to its image, honouring the built-in/imported distinction."""
+    extra_cache = extra_cache or {}
+    if filename.startswith(IMPORTED_PREFIX):
+        return extra_cache[f"{layer}/{filename[len(IMPORTED_PREFIX):]}"]
+    key = f"{layer}/{filename}"
+    # Plain names are built-in; fall back to imported only for legacy, untagged values
+    return _cache[key] if key in _cache else extra_cache[key]
 
 
 def available_pngs(layer: str, extra_files: dict[str, list[str]] | None = None) -> list[str]:
@@ -136,7 +152,10 @@ def random_pieces(extra_files: dict[str, list[str]] | None = None) -> Pieces:
                 continue
         if random.random() >= threshold:
             continue
-        parts[layer] = random.choice(available_pngs(layer, extra_files))
+        choices = builtin_pngs(layer) + [
+            IMPORTED_PREFIX + f for f in (extra_files or {}).get(layer, [])
+        ]
+        parts[layer] = random.choice(choices)
         
     return Pieces(**parts)
 
@@ -161,11 +180,11 @@ def compose_svg(pieces: Pieces, extra_cache: dict[str, dict] | None = None) -> s
         filename = getattr(pieces, subfolder)
         if(filename):
             key = f"{layer}/{filename}"
-            entry = (extra_cache or {}).get(key) or _cache[key]
+            entry = lookup_piece(layer, filename, extra_cache)
             if layer.startswith("leg"):
                 legs = split_legs(entry)
                 if len(legs) == 1:
-                    parts = add_part(legs[0], layer, key, parts)
+                    parts = add_part(legs[0][0], layer, key, parts)
                 else:
                     parts = add_part(legs[0][0], layer+"_l", key, parts, legs[0][1])
                     parts = add_part(legs[1][0], layer+"_r", key, parts, legs[1][1])
